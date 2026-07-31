@@ -38,13 +38,13 @@ def analyze_charset(s: str) -> list:
     if re.fullmatch(r"[ABab\s]+", s2) and len(stripped_ws) % 5 == 0 and len(stripped_ws) > 0:
         notes.append("Sadece A/B harfleri, 5'in katı -> Bacon Cipher adayı")
 
-    if length in (8, 32, 40, 56, 64, 96, 128) and re.fullmatch(r"[0-9A-Fa-f]+", stripped_ws):
+    if length in (8, 32, 40, 56, 64, 96, 128) and re.fullmatch(r"[0-9A-Fa-f]+", stripped_ws):       #Bu değişicek 
         hash_map = {8: "CRC32", 32: "MD5/NTLM", 40: "SHA1", 56: "SHA224",
                     64: "SHA256/SHA3-256/Keccak256", 96: "SHA384", 128: "SHA512/SHA3-512"}
         notes.append(f"Uzunluk {length} + hex -> HASH olabilir ({hash_map[length]}), decode edilemez, kırmaya çalışma")
 
     if re.match(r"^\$(1|2a|2b|2y|5|6|y|argon2id|argon2i|argon2d)\$", s2):
-        notes.append("'$...$' formatı -> crypt/bcrypt/scrypt/argon2 hash formatı, decode edilemez")
+        notes.append("'$...$' formatı -> crypt/bcrypt/scrypt/argon2 hash formatı, decode edilemez")         #Daha iyi yap
 
     parts = s2.split(".")
     if len(parts) == 3 and all(re.fullmatch(r"[A-Za-z0-9_\-]+", p) for p in parts if p):

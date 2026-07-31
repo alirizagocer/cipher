@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import html
 
 from . import __version__
 from .charset import analyze_charset
@@ -44,6 +45,7 @@ def main():
     parser.add_argument("--no-color", action="store_true", help="Renkli çıktıyı kapat")
     parser.add_argument("--full", action="store_true", help="Decode edilmiş metni kısaltmadan tam göster")
     parser.add_argument("--json", action="store_true", help="Sonuçları JSON olarak yazdır (scripting için)")
+    parser.add_argument("--html", action="store_true", help="Sonuçları HTML formatında yazdırır.")
     args = parser.parse_args()
 
     if args.file:
@@ -76,6 +78,30 @@ def main():
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
+
+    if args.html:
+            print("<html><head><meta charset='utf-8'></head><body>")
+            print("<h2>Karakter Seti Notları</h2><ul>")
+            
+            for note in charset_notes:
+                # Notların içindeki olası tehlikeli karakterleri temizle
+                safe_note = html.escape(note)
+                print(f"<li>{safe_note}</li>")
+                
+            print("</ul><h2>Adaylar</h2><table border='1'>")
+            print("<tr><th>Sıra</th><th>Zincir</th><th>Metin</th><th>Skor</th><th>Tür</th></tr>")
+            
+            for i, c in enumerate(candidates):
+                # Zinciri list formundan metin formuna çevir (hex -> base64)
+                chain_str = " -> ".join(c.chain) if c.chain else "(orijinal)"
+                
+                # Çözülen metnin içindeki HTML taglarını zararsız hale getir
+                safe_text = html.escape(c.text)
+                
+                print(f"<tr><td>{i+1}</td><td>{chain_str}</td><td>{safe_text}</td><td>{c.score}</td><td>{c.kind}</td></tr>")
+                
+            print("</table></body></html>")
+            return
 
     print(color("=== Karakter Seti Analizi ===", BOLD + CYAN, use_color))
     for note in charset_notes:
