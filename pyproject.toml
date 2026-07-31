@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ciphertool"
+version = "0.2.0"
+description = "Bilinmeyen encode/cipher edilmiş metni terminalde analiz edip olası çözümleri skorlayarak sıralayan araç"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Aliriza" }]
+dependencies = []
+
+[project.scripts]
+identify = "ciphertool.cli:main"
+
+[tool.setuptools]
+packages = ["ciphertool"]
