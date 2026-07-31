@@ -16,12 +16,11 @@ CyberChef'in "Magic" özelliğinin terminal/offline, açık kaynak versiyonu gib
 ## Kurulum
 
 ```bash
-git clone <bu-repo>
+git clone <github.com/alirizagocer/cipher>
 cd ciphertool
 pip install -e .
 ```
 
-Bağımlılık yok, sadece Python 3.8+ standart kütüphanesi kullanılıyor.
 
 ## Kullanım
 
