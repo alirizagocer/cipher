@@ -19,8 +19,7 @@ diye AKTIF olarak soylemek - sessizce dusuk skor vermek yerine.
 import math
 from collections import Counter
 from dataclasses import dataclass
-
-
+import string
 @dataclass
 class EntropyReport:
     entropy_bits_per_byte: float      # 0-8 arasi, 8 = tam rastgele
