@@ -1,5 +1,9 @@
 # identify — Terminal Cipher / Encoding Identifier
 
+## English summary
+
+identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system.
+
 Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, hash mı, XOR ile mi şifrelenmiş...) bu araç:
 
 1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID dahil)
