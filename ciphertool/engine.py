@@ -22,7 +22,10 @@ from .decoders import (
 )
 from .scorer import score_text
 from .filesig import detect_file_signature
-from .crack import crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort
+from .crack import (
+    crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort,
+    crack_substitution,
+)
 from .hashid import identify_hash
 
 
@@ -295,5 +298,17 @@ def _run_expensive_analyzers(raw: str, results: List[Candidate]):
                 (a, b), text = best
                 sc = score_text(text)
                 results.append(Candidate(chain=[f"Affine kırma (a={a}, b={b})"], text=text, score=sc))
+    except Exception:
+        pass
+
+    try:
+        letters_only_len = sum(1 for c in raw if c.isalpha())
+        if letters_only_len >= 80:  # substitution kirma icin pratikte guvenilir minimum
+            sub = crack_substitution(raw, time_budget_seconds=4.5)
+            if sub:
+                key_str, text, sc, fitness, confidence_note = sub
+                results.append(Candidate(
+                    chain=[f"Substitution kırma (hill-climbing, {confidence_note})"],
+                    text=text, score=sc))
     except Exception:
         pass

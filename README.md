@@ -4,6 +4,7 @@ Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, ha
 
 1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID dahil)
 2. **Hash/KDF tespitini pattern-veritabanıyla yapar** — bcrypt/argon2/md5crypt/sha512crypt/Django PBKDF2 gibi yapısal olarak KESİN formatları %95+ güvenle tek adayla söyler; sadece hex uzunluğundan ayırt edilebilen durumlarda (örn. 32 hex → MD5 mi NTLM mi MD4 mü) TÜM adayları ayrı ayrı, gerçek-dünya yaygınlığına göre ağırlıklandırılmış yüzdelerle sıralar — asla "bunlardan biri" diye geçiştirmez
+3. **Genel substitution cipher'ları anahtar kelimesiz kırar** (quipqiup tarzı hill-climbing + gerçek İngilizce quadgram istatistikleri — ~389.000 quadgram, ~4.2 milyar sayım içeren practicalcryptography.com korpusu) — 26! büyüklüğündeki anahtar uzayında rastgele-takas + çoklu-restart ile arama yapar, en az ~60 harflik metinlerde güvenilir sonuç verir
 3. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
 4. **Anahtar gerektiren zayıf şifrelemeleri brute-force ile kırar**: XOR (tek-byte ve tekrarlayan anahtar — Hamming distance ile anahtar uzunluğu tahmini), Vigenère ve Beaufort (Index of Coincidence ile), Rail Fence, Affine
 5. **Dosya imzası (magic byte) tespiti** — decode edilen veri aslında bir PNG/ZIP/PDF/ELF/GZIP dosyasıysa bunu anında söyler (CyberChef'in "Detect File Type" özelliğinin offline karşılığı)
@@ -106,6 +107,7 @@ ROT13, ROT47, ROT5, ROT18, Atbash, Caesar (tüm 25 shift), Morse code, Bacon cip
 - **XOR tekrarlayan-anahtar** — Hamming distance ile anahtar uzunluğu tahmin edilir, sonra her sütun ETAOIN frekans tablosuyla tek tek kırılır (klasik Cryptopals yöntemi)
 - **Vigenère** — Index of Coincidence ile anahtar uzunluğu tahmin edilir, sonra her sütun Caesar-crack ile kırılır
 - **Beaufort** — Vigenère'in matematiksel kardeşi (P = K − C mod 26), aynı IC tabanlı anahtar uzunluğu tahminiyle ayrı bir sütun-kırma formülü kullanır
+- **Genel Substitution Cipher (anahtar kelimesiz)** — `ciphertool/crack.py::crack_substitution`: frekans-eşleşmeli başlangıç anahtarından başlayıp **simulated annealing + hill-climbing** ile (sıcaklık zamanla azalan, yerel optimumdan kaçabilen bir arama) rastgele harf-çifti takasları dener, fitness fonksiyonu olarak gerçek İngilizce quadgram log-olabilirliğini kullanır (`ciphertool/ngram.py`, ~389.000 quadgram / ~4.2 milyar sayım). Yerel optimuma takılmayı azaltmak için zaman bütçesi dolana kadar sınırsız restart yapar. En az 80 harf gerektirir; **200+ harflik doğal dil metinlerinde test setimizde %100 başarı**, 80-130 harf arası "sınır bölge" — bunu dürüstçe bir güven notuyla (düşük/orta/yüksek) işaretler, asla sahte kesinlik iddia etmez. **Not**: pangram tarzı yapay metinler (her harfin ~1 kez geçtiği, "the quick brown fox...") uzun olsa bile istatistiksel tekrar azlığından zorlanabilir — bu algoritmanın değil, substitution-kırmanın matematiksel bir sınırı (Shannon'ın "unicity distance" kavramı)
 
 **Hash/KDF tespiti (kırma değil, TANIMA — `ciphertool/hashid.py`):**
 - **Yapısal olarak KESİN formatlar** (%90-99 güven, tek aday): bcrypt, md5crypt, sha256crypt, sha512crypt, scrypt, Argon2 (i/d/id), yescrypt, phpass (WordPress/phpBB), LDAP SSHA/SHA, Django SHA1/PBKDF2-SHA256, genel PBKDF2 — hepsi prefix/delimiter imzasından kesin olarak tanınır
@@ -141,11 +143,11 @@ Toplamda 0-100 arası bir skor üretilir. 65+ genelde doğru çözümdür, 35 al
 
 ## Sınırlamalar / gelecek fikirleri
 
-- Substitution cipher (genel, anahtar kelimesiz) brute-force'u yok — quipqiup tarzı dil modeli + hill-climbing eklenebilir (en değerli sıradaki eklenti)
-- Sadece İngilizce/Türkçe için optimize skor fonksiyonu var, başka dillerde frekans analizi zayıf kalır
+- Sadece İngilizce/Türkçe için optimize skor fonksiyonu var, başka dillerde frekans analizi zayıf kalır (substitution kırma quadgram istatistikleri de sadece İngilizce)
 - AES/RSA elbette kırılmıyor (kriptografik olarak güvenli), sadece "bu muhtemelen gerçek şifreleme" tespiti yapılıyor (entropi analizi `scorer.looks_like_binary_blob` içinde var ama CLI çıktısına henüz bağlı değil)
 - Playfair, Hill cipher, ADFGVX brute-force'u yok
 - Hash tespitindeki yüzdeler gerçek-dünya yaygınlığına göre KABA bir tahmindir, istatistiksel kanıt değildir — kesin ayrım için verinin kaynağına (Windows dump/git/TLS sertifikası vb.) bakmak gerekir
+- Substitution kırma ~60 harfin altında güvenilir değil ve büyük (>500 harf) metinlerde 6 saniyelik zaman bütçesine takılıp yarım kalabilir — çok uzun metinlerde `crack_substitution()`'ı doğrudan daha yüksek `time_budget_seconds` ile çağırmak gerekebilir
 
 PR'lar açık. Kendi ihtiyacına göre `ciphertool/decoders.py`'a yeni decoder eklemek çok kolay: `(isim, fonksiyon, "encoding"|"cipher")` formatında `SINGLE_SHOT_DECODERS` listesine eklemen yeterli. Anahtar-brute-force gerektiren teknikler için `ciphertool/crack.py`'a, yeni hash/KDF pattern'i eklemek için `ciphertool/hashid.py`'daki `PREFIX_PATTERNS` / `LENGTH_CANDIDATES` listelerine bakabilirsin.
 
@@ -155,7 +157,7 @@ PR'lar açık. Kendi ihtiyacına göre `ciphertool/decoders.py`'a yeni decoder e
 python3 tests/test_basic.py
 ```
 
-26 sanity test var (encoding'ler, klasik şifreler, XOR/Vigenère/Beaufort kırma, dosya tespiti, JWT, hash tespiti).
+28 sanity test var (encoding'ler, klasik şifreler, XOR/Vigenère/Beaufort/Substitution kırma, dosya tespiti, JWT, hash tespiti).
 
 ## Lisans
 

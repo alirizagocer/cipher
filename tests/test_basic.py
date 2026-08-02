@@ -15,7 +15,10 @@ from ciphertool.decoders import (
     try_jwt, try_html_entities, try_unicode_escape, try_polybius,
     try_base45, try_base36, caesar_shift,
 )
-from ciphertool.crack import crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort
+from ciphertool.crack import (
+    crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort,
+    crack_substitution,
+)
 from ciphertool.filesig import detect_file_signature
 from ciphertool.hashid import identify_hash
 import hashlib as _hashlib
@@ -229,6 +232,31 @@ def test_beaufort_crack_roundtrip():
     assert result is not None
     _, decoded, score = result
     assert decoded.replace(" ", "") == plaintext.replace(" ", "")
+
+
+def test_substitution_crack_hillclimbing():
+    import random as _r
+    import string as _s
+    plaintext = ("IN CRYPTOGRAPHY A SUBSTITUTION CIPHER IS A METHOD OF ENCRYPTING "
+                 "IN WHICH UNITS OF PLAINTEXT ARE REPLACED WITH THE CIPHERTEXT IN A "
+                 "DEFINED MANNER WITH THE HELP OF A KEY THE RECEIVER DECIPHERS THE "
+                 "TEXT BY PERFORMING THE INVERSE SUBSTITUTION USING THE SAME KEY "
+                 "THIS TECHNIQUE HAS BEEN USED FOR CENTURIES IN VARIOUS FORMS")
+    alphabet = list(_s.ascii_uppercase)
+    shuffled = alphabet[:]
+    _r.seed(42)
+    _r.shuffle(shuffled)
+    enc_map = dict(zip(alphabet, shuffled))
+    ciphertext = "".join(enc_map.get(c, c) for c in plaintext)
+
+    result = crack_substitution(ciphertext, time_budget_seconds=6.0)
+    assert result is not None
+    _, decoded, score, fitness, confidence_note = result
+    assert decoded.replace(" ", "") == plaintext.replace(" ", "")
+
+
+def test_substitution_crack_too_short_returns_none():
+    assert crack_substitution("SHORT TEXT HERE") is None
 
 
 if __name__ == "__main__":
