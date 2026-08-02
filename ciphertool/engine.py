@@ -26,7 +26,9 @@ from .crack import (
     crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort,
     crack_substitution,
 )
+from .transposition import crack_columnar_transposition
 from .hashid import identify_hash
+from .entropy import analyze_entropy, CLASS_COMPRESSED_OR_ENCRYPTED
 
 
 @dataclass
@@ -96,6 +98,40 @@ def _check_file_signature(text: str):
     except Exception:
         pass
     return None
+
+
+def _check_entropy_root(raw: str):
+    """Raw girdiyi bilinen byte-encoding'lerle decode edip entropi analizi
+    yapar. Yuksek entropili (gercek sifreleme/sikistirma/rastgele veri
+    isareti) sonuclari (decoder_adi, EntropyReport) olarak dondurur. Dosya
+    imzasi zaten eslesen decode'lari ATLAR - o zaten baska bir mekanizmayla
+    (dosya tespiti) daha net aciklaniyor, entropi notuyla tekrar etmeye
+    gerek yok."""
+    hits = []
+    seen_bytes = set()
+    for name, fn in BYTES_DECODERS:
+        try:
+            b = fn(raw)
+        except Exception:
+            b = None
+        if b and len(b) >= 32 and b not in seen_bytes:
+            seen_bytes.add(b)
+            if detect_file_signature(b):
+                continue  # dosya olarak zaten tespit edildi, entropi notu gereksiz
+            rep = analyze_entropy(b)
+            if rep.classification == CLASS_COMPRESSED_OR_ENCRYPTED:
+                hits.append((name, rep))
+    try:
+        s2 = raw.strip().replace(" ", "")
+        if s2 and len(s2) % 2 == 0 and len(s2) >= 64 and all(c in "0123456789abcdefABCDEF" for c in s2):
+            b = binascii.unhexlify(s2)
+            if b not in seen_bytes and not detect_file_signature(b):
+                rep = analyze_entropy(b)
+                if rep.classification == CLASS_COMPRESSED_OR_ENCRYPTED:
+                    hits.append(("Hex (Base16)", rep))
+    except Exception:
+        pass
+    return hits
 
 
 class _Budget:
@@ -189,6 +225,37 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
                  "şifre kırma teknikleriyle 'çözülmeye' çalışılması anlamsız gürültü üretir, o yüzden atlandı.",
             score=5.0, kind="info"))
 
+    try:
+        # ONEMLI: entropi uyarisi SADECE hicbir decoder anlamli/okunabilir bir
+        # sonuc BULAMADIYSA gosterilir. Yoksa yanlis-alfabe denemeleri (orn.
+        # duz Base64 metnini Base85/Base91 gibi YANLIS bir decoder'la da
+        # "deneyip" o da bir cikti uretince, o cikti dogal olarak rastgele
+        # gorunur ve entropi yuksek cikar - bu GERCEK sifreleme degil, sadece
+        # yanlis decoder uygulanmis olmasi. Test ederken bunu yakaladim: gercek
+        # bir Base64 metni dogru cozulmusken, Base85 yanlis-alfabe denemesi
+        # "yuksek entropi -> sifreli" diye YANLIS UYARI veriyordu ve hatta
+        # dogru cevabin ONUNE geciyordu. Simdi: eger herhangi bir chain/file
+        # sonucu zaten anlamli skor (>=40) aldiysa, entropi uyarilari tamamen
+        # bastiriliyor.
+        #
+        # AYRICA: skip_ciphers True ise (girdi hash/KDF'ye benziyor) entropi
+        # kontrolunu HIC calistirmiyoruz - ayni yanlis-alfabe sorunu bir bcrypt
+        # hash'inde de olusuyordu (Base85/Base91 ile "denenince" rastgele
+        # gorunumlu cikti -> yanlis "yuksek entropi" alarmi). Bir hash zaten
+        # Karakter Seti Analizi'nde acikca tanimlandigi icin, ayrica entropi
+        # notu eklemek sadece gurultu ve potansiyel yanlis-alarm demek.
+        best_existing_score = max((c.score for c in results if c.kind in ("chain", "file")), default=0.0)
+        if not skip_ciphers and best_existing_score < 40.0:
+            for decoder_name, rep in _check_entropy_root(raw.strip()):
+                ecb_extra = f" {rep.ecb_repeat_note}" if rep.ecb_repeat_found else ""
+                note = (f"[YÜKSEK ENTROPİ] {decoder_name} ile decode edilince {rep.length} byte, "
+                        f"{rep.entropy_bits_per_byte:.2f} bit/byte entropi çıktı. {rep.note}{ecb_extra}")
+                results.append(Candidate(
+                    chain=[f"{decoder_name} -> entropi analizi"],
+                    text=note, score=68.0, kind="entropy"))
+    except Exception:
+        pass
+
     results.append(Candidate(chain=["(decode uygulanmadı - orijinal metin)"], text=raw.strip(),
                               score=score_text(raw.strip()), kind="original"))
 
@@ -229,6 +296,15 @@ def _bytes_from_text_guess(text: str) -> Optional[bytes]:
 
 
 def _run_expensive_analyzers(raw: str, results: List[Candidate]):
+    # Substitution (4.5s) ve Columnar Transposition (3.5s) kirma, en pahali
+    # iki analiz - eger recurse() asamasinda zaten guclu bir duz-metin adayi
+    # bulunduysa (skor >=55, yani net bir cevap var), bunlari calistirmaya
+    # gerek yok. Bu hem performansi ciddi arttirir (tek sorguda ~8sn tasarruf)
+    # hem de zaten dogru olan sonucun yaninda alakasiz "belki de transposition"
+    # gurultusu eklemeyi engeller - net cevap varken ek arama yapmak
+    # dogrulugu degil sadece gecikmeyi arttirir.
+    already_solved = max((c.score for c in results if c.kind in ("chain", "file")), default=0.0) >= 55.0
+
     data = _bytes_from_text_guess(raw)
     if data and 2 <= len(data) <= 20000:
         try:
@@ -303,12 +379,23 @@ def _run_expensive_analyzers(raw: str, results: List[Candidate]):
 
     try:
         letters_only_len = sum(1 for c in raw if c.isalpha())
-        if letters_only_len >= 80:  # substitution kirma icin pratikte guvenilir minimum
+        if not already_solved and letters_only_len >= 80:  # substitution kirma icin pratikte guvenilir minimum
             sub = crack_substitution(raw, time_budget_seconds=4.5)
             if sub:
                 key_str, text, sc, fitness, confidence_note = sub
                 results.append(Candidate(
                     chain=[f"Substitution kırma (hill-climbing, {confidence_note})"],
+                    text=text, score=sc))
+    except Exception:
+        pass
+
+    try:
+        if not already_solved and len(raw.strip()) >= 20:
+            trans = crack_columnar_transposition(raw, time_budget_seconds=3.5)
+            if trans:
+                n_cols, order, text, sc, fitness = trans
+                results.append(Candidate(
+                    chain=[f"Columnar Transposition kırma ({n_cols} sütun, sıra={order})"],
                     text=text, score=sc))
     except Exception:
         pass

@@ -69,6 +69,54 @@ PREFIX_PATTERNS = [
      "'$pbkdf2$' / '$pbkdf2-sha256$' -> PBKDF2 KDF imzasi.", ""),
     (r"^[0-9a-fA-F]{32}:[a-zA-Z0-9]{1,32}$", "Hash:Salt formatı (32-hex + salt)", 60,
      "32 hex + ':' + salt -> muhtemelen MD5/NTLM + ayri salt (cracker araclari icin tipik format).", ""),
+
+    # --- Kerberos (Active Directory saldirilarinda cok yaygin: kerberoasting/AS-REP roasting) ---
+    (r"^\$krb5tgs\$23\$", "Kerberos 5 TGS-REP (RC4, etype 23) — 'Kerberoasting'", 98,
+     "'$krb5tgs$23$' -> hashcat mode 13100, klasik kerberoasting hash formati.",
+     "Active Directory service account saldirilari (Impacket GetUserSPNs.py ciktisi)."),
+    (r"^\$krb5asrep\$23\$", "Kerberos 5 AS-REP (RC4, etype 23) — 'AS-REP Roasting'", 98,
+     "'$krb5asrep$23$' -> hashcat mode 18200, preauth kapali hesaplara karsi saldiri.",
+     "Active Directory (Impacket GetNPUsers.py ciktisi)."),
+    (r"^\$krb5pa\$", "Kerberos 5 PA-ENC-TIMESTAMP (pre-auth)", 95,
+     "'$krb5pa$' -> Kerberos pre-authentication hash'i (hashcat mode 7500/19600/19800).", ""),
+
+    # --- Windows/AD ek formatlar ---
+    (r"^[0-9a-fA-F]{32}:[0-9a-fA-F]{32}$", "NTLM (LM:NTLM çifti)", 70,
+     "İki tane 32-hex, ':' ile ayrılmış -> klasik SAM dump formatı (LM hash:NTLM hash).",
+     "pwdump/secretsdump.py çıktısı."),
+
+    # --- MySQL ---
+    (r"^\*[0-9A-Fa-f]{40}$", "MySQL 4.1+ (SHA1(SHA1(pass)))", 96,
+     "'*' + 40 hex -> MySQL'in modern (4.1 sonrasi) parola hash formati.", "mysql.user tablosu."),
+
+    # --- Cisco ---
+    (r"^\$1\$[./0-9A-Za-z]{4}\$[./0-9A-Za-z]{22}$", "Cisco IOS Type 5 (MD5-crypt varyantı)", 90,
+     "Cisco IOS 'enable secret 5' formatı, teknik olarak md5crypt ile aynı yapı.", "Cisco router/switch config."),
+
+    # --- WPA/WPA2 ---
+    (r"^WPA\*01\*", "WPA/WPA2 handshake (hashcat 22000 formatı)", 97,
+     "'WPA*01*' -> hashcat'in yeni birleşik WPA*PBKDF2* formatı (eski .hccapx yerine).",
+     "Wi-Fi el sıkışma yakalama (airodump-ng + hcxpcapngtool)."),
+
+    # --- macOS ---
+    (r"^\$ml\$", "macOS 10.8+ (PBKDF2-SHA512 tabanlı)", 92,
+     "'$ml$' -> macOS'un modern kullanıcı parola hash formatı (dscl/plist içinden).", ""),
+
+    # --- MSSQL ---
+    (r"^0x0100[0-9A-Fa-f]{48}$", "MSSQL 2000 (SHA1, salt'lı)", 92,
+     "'0x0100' prefix + 48 hex -> eski MSSQL Server parola hash formatı.", ""),
+    (r"^0x0200[0-9A-Fa-f]{136}$", "MSSQL 2012+ (SHA512, salt'lı)", 92,
+     "'0x0200' prefix + 136 hex -> modern MSSQL Server parola hash formatı.", ""),
+
+    # --- Diğer yaygın CTF/pentest formatları ---
+    (r"^[0-9a-fA-F]{32}\$[0-9a-fA-F]{32}$", "Joomla (MD5$salt)", 75,
+     "32 hex + '$' + 32 hex salt -> Joomla CMS eski parola formatı (yeterince spesifik bir yapı).", ""),
+    (r"^\$apr1\$", "Apache MD5 (APR1, htpasswd)", 96,
+     "'$apr1$' -> Apache'nin htpasswd için kullandığı MD5 varyantı (md5crypt'e çok benzer ama farklı).", ""),
+    (r"^\$S\$[./0-9A-Za-z]{52}$", "Drupal 7 (phpass varyantı)", 93,
+     "'$S$' + 52 karakter -> Drupal 7'ye özel phpass hash formatı.", ""),
+    (r"^grub\.pbkdf2\.sha512\.", "GRUB2 PBKDF2-SHA512", 97,
+     "'grub.pbkdf2.sha512.' -> GRUB2 bootloader parola hash formatı (/boot/grub/grub.cfg).", ""),
 ]
 
 # JWT ayrica charset.py'da tespit ediliyor, burada tekrar etmiyoruz.

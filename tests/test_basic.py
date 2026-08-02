@@ -19,8 +19,10 @@ from ciphertool.crack import (
     crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort,
     crack_substitution,
 )
+from ciphertool.transposition import crack_columnar_transposition
 from ciphertool.filesig import detect_file_signature
 from ciphertool.hashid import identify_hash
+from ciphertool.entropy import analyze_entropy, detect_ecb_repetition, CLASS_COMPRESSED_OR_ENCRYPTED
 import hashlib as _hashlib
 
 
@@ -187,6 +189,28 @@ def test_hashid_ntlm_uppercase_hint_shifts_confidence():
     assert upper_cands["MD5"] < lower_cands["MD5"]
 
 
+def test_hashid_kerberoasting_is_certain():
+    fake = "$krb5tgs$23$user$realm$*app*$" + "a" * 100
+    cands = identify_hash(fake)
+    assert cands and "Kerberoasting" in cands[0].name and cands[0].certain
+
+
+def test_hashid_apache_apr1_is_certain():
+    cands = identify_hash("$apr1$abcd1234$somehashvaluehere1234567890")
+    assert cands and cands[0].name.startswith("Apache") and cands[0].certain
+
+
+def test_hashid_generic_32hex_not_falsely_flagged_as_cisco_or_oracle():
+    # Onceki bir hatada asiri genis regex'ler herhangi bir uzun hex string'i
+    # yanlislikla "Cisco Type 7" / "Oracle" olarak KESIN isaretliyordu - bunu
+    # engelleyen regresyon testi.
+    md5_hex = _hashlib.md5(b"random").hexdigest()
+    cands = identify_hash(md5_hex)
+    names = [c.name for c in cands]
+    assert not any("Cisco" in n or "Oracle" in n for n in names)
+    assert not any(c.certain for c in cands)
+
+
 def test_polybius_square():
     # HELLO -> H=23 E=15 L=31 L=31 O=34
     assert try_polybius("23 15 31 31 34") == "HELLO"
@@ -257,6 +281,89 @@ def test_substitution_crack_hillclimbing():
 
 def test_substitution_crack_too_short_returns_none():
     assert crack_substitution("SHORT TEXT HERE") is None
+
+
+def test_entropy_random_data_classified_as_encrypted():
+    import os as _os
+    b = _os.urandom(128)
+    rep = analyze_entropy(b)
+    assert rep.classification == CLASS_COMPRESSED_OR_ENCRYPTED
+
+
+def test_entropy_english_text_classified_as_plain():
+    text = (b"THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG WHILE THE FIVE BOXING "
+            b"WIZARDS JUMP QUICKLY ACROSS THE FIELD TODAY IN THE AFTERNOON SUN")
+    rep = analyze_entropy(text)
+    assert rep.classification != CLASS_COMPRESSED_OR_ENCRYPTED
+
+
+def test_entropy_ecb_repetition_detected():
+    block = b"AAAAAAAAAAAAAAAA"  # 16 byte, ECB'de ayni plaintext -> ayni ciphertext bloklari
+    data = block + b"BBBBBBBBBBBBBBBB" + block + block
+    found, n_repeated, total = detect_ecb_repetition(data)
+    assert found is True
+    assert n_repeated >= 1
+
+
+def test_engine_flags_high_entropy_data_not_legit_encoding():
+    import os as _os
+    import base64 as _b64_2
+    random_b64 = _b64_2.b64encode(_os.urandom(96)).decode()
+    results = explore(random_b64, max_depth=2, top_n=10)
+    top = max(results, key=lambda r: r.score)
+    assert top.kind == "entropy"
+
+
+def test_columnar_transposition_crack():
+    from ciphertool.transposition import decrypt_columnar, _column_lengths
+
+    def encrypt_columnar(plaintext, order):
+        n_cols = len(order)
+        lengths = _column_lengths(len(plaintext), n_cols)
+        R = -(-len(plaintext) // n_cols)
+        grid = [[None] * n_cols for _ in range(R)]
+        idx = 0
+        for row in range(R):
+            for col in range(n_cols):
+                if idx < len(plaintext) and row < lengths[col]:
+                    grid[row][col] = plaintext[idx]
+                    idx += 1
+        out = []
+        for original_col in order:
+            for row in range(R):
+                if grid[row][original_col] is not None:
+                    out.append(grid[row][original_col])
+        return "".join(out)
+
+    plaintext = ("ATTACK AT DAWN NEAR THE OLD BRIDGE BRING ALL YOUR EQUIPMENT "
+                 "AND MEET AT THE USUAL PLACE BEFORE SUNRISE")
+    key_order = [3, 0, 4, 1, 2]
+    ciphertext = encrypt_columnar(plaintext, key_order)
+
+    result = crack_columnar_transposition(ciphertext, time_budget_seconds=4.0)
+    assert result is not None
+    n_cols, order, decoded, score, fitness = result
+    assert decoded == plaintext
+
+
+def test_engine_does_not_flag_legit_base64_text_as_encrypted():
+    import base64 as _b64_2
+    text = "The secret meeting will happen tonight near the old bridge by the river"
+    b64 = _b64_2.b64encode(text.encode()).decode()
+    results = explore(b64, max_depth=2, top_n=10)
+    top = max(results, key=lambda r: r.score)
+    assert top.kind == "chain"
+    assert "secret meeting" in top.text.lower()
+
+
+def test_engine_certain_hash_has_no_entropy_noise():
+    # Regresyon: bcrypt gibi KESIN tespit edilen bir hash'te, yanlis-alfabe
+    # decode denemeleri (Base85/Base91) rastgele gorunumlu cikti uretip
+    # yanlislikla "yuksek entropi -> sifreli" gurultusu ekliyordu. Artik
+    # skip_ciphers=True oldugunda entropi kontrolu de tamamen devre disi.
+    fake_bcrypt = "$2b$12$KIXQ7z8j3n5f6h1k2l3m4uO9pQ8rT7vW6xY5zA4bC3dE2fG1hI0jK"
+    results = explore(fake_bcrypt, max_depth=2, top_n=10)
+    assert not any(r.kind == "entropy" for r in results)
 
 
 if __name__ == "__main__":
