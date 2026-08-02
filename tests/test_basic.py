@@ -366,6 +366,43 @@ def test_engine_certain_hash_has_no_entropy_noise():
     assert not any(r.kind == "entropy" for r in results)
 
 
+def test_a1z26():
+    from ciphertool.decoders import try_a1z26
+    assert try_a1z26("8-5-12-12-15") == "HELLO"
+    assert try_a1z26("8 5 12 12 15") == "HELLO"
+    assert try_a1z26("812") is None  # ayirici yok
+
+
+def test_nato_phonetic():
+    from ciphertool.decoders import try_nato_phonetic
+    assert try_nato_phonetic("HOTEL ECHO LIMA LIMA OSCAR") == "HELLO"
+
+
+def test_vigenere_crack_multi_candidate_short_key():
+    # Kisa anahtarli (3 harf) + orta uzunluklu metinde tek-IC-tahmini bazen
+    # yanlis uzunluga gidebiliyordu - coklu aday + quadgram dogrulamasi
+    # bunu duzeltiyor mu diye kontrol eden regresyon testi.
+    def vigenere_encrypt(pt, key):
+        out = []
+        ki = 0
+        for c in pt:
+            if c.isalpha():
+                k = ord(key[ki % len(key)].upper()) - 65
+                out.append(caesar_shift(c, -k))
+                ki += 1
+            else:
+                out.append(c)
+        return "".join(out)
+
+    plaintext = ("THE WEATHER TODAY IS QUITE PLEASANT WITH CLEAR SKIES AND A GENTLE "
+                 "BREEZE COMING FROM THE WEST WE SHOULD GO FOR A WALK IN THE PARK")
+    ct = vigenere_encrypt(plaintext, "KEY")
+    result = crack_vigenere(ct)
+    assert result is not None
+    _, decoded, score = result
+    assert decoded.replace(" ", "").upper() == plaintext.replace(" ", "").upper()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     failed = 0

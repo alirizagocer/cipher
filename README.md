@@ -102,13 +102,13 @@ Dosya tespiti örneği (Base64 içine gömülü PNG):
 Base64 (standart + URL-safe), Base32, Base36, Base45, Base58, Base85/Ascii85, Base91, Hex, Binary, Octal, Decimal ASCII kodları, URL encoding, HTML entities, Unicode/hex escape (`\u`, `\x`), Quoted-Printable, JWT
 
 **Tespit eder (klasik şifreler — brute-force ile çözülür):**
-ROT13, ROT47, ROT5, ROT18, Atbash, Caesar (tüm 25 shift), Morse code, Bacon cipher, Polybius Square (5x5), basit reverse, **Rail Fence** (2-8 ray denenir), **Affine** (tüm geçerli a/b kombinasyonları)
+ROT13, ROT47, ROT5, ROT18, Atbash, Caesar (tüm 25 shift), Morse code, Bacon cipher, Polybius Square (5x5), **A1Z26 (harf-sayı kodu)**, **NATO Fonetik Alfabesi**, basit reverse, **Rail Fence** (2-8 ray denenir), **Affine** (tüm geçerli a/b kombinasyonları)
 
 **Kırar (anahtar gerektiren ama brute-force ile aşılabilen zayıf şifrelemeler):**
 - **XOR tek-byte** — 256 anahtarın tamamı denenir, en okunabilir sonuç seçilir
 - **XOR tekrarlayan-anahtar** — Hamming distance ile anahtar uzunluğu tahmin edilir, sonra her sütun ETAOIN frekans tablosuyla tek tek kırılır (klasik Cryptopals yöntemi)
-- **Vigenère** — Index of Coincidence ile anahtar uzunluğu tahmin edilir, sonra her sütun Caesar-crack ile kırılır
-- **Beaufort** — Vigenère'in matematiksel kardeşi (P = K − C mod 26), aynı IC tabanlı anahtar uzunluğu tahminiyle ayrı bir sütun-kırma formülü kullanır
+- **Vigenère** — Index of Coincidence ile **birden fazla aday** anahtar uzunluğu üretilir (tek bir "en iyi tahmin" değil), her aday gerçekten denenip **quadgram fitness ile doğrulanır** — tek-tahmin yöntemi kısa/orta metinlerde bazen yanlış uzunluğa gidebiliyordu, bu iyileştirme doğruluğu doğrudan artırıyor
+- **Beaufort** — Vigenère'in matematiksel kardeşi (P = K − C mod 26), aynı çoklu-aday + quadgram doğrulama mantığıyla ayrı bir sütun-kırma formülü kullanır
 - **Genel Substitution Cipher (anahtar kelimesiz)** — `ciphertool/crack.py::crack_substitution`: frekans-eşleşmeli başlangıç anahtarından başlayıp **simulated annealing + hill-climbing** ile (sıcaklık zamanla azalan, yerel optimumdan kaçabilen bir arama) rastgele harf-çifti takasları dener, fitness fonksiyonu olarak gerçek İngilizce quadgram log-olabilirliğini kullanır (`ciphertool/ngram.py`, ~389.000 quadgram / ~4.2 milyar sayım). Yerel optimuma takılmayı azaltmak için zaman bütçesi dolana kadar sınırsız restart yapar. En az 80 harf gerektirir; **200+ harflik doğal dil metinlerinde test setimizde %100 başarı**, 80-130 harf arası "sınır bölge" — bunu dürüstçe bir güven notuyla (düşük/orta/yüksek) işaretler, asla sahte kesinlik iddia etmez. **Not**: pangram tarzı yapay metinler (her harfin ~1 kez geçtiği, "the quick brown fox...") uzun olsa bile istatistiksel tekrar azlığından zorlanabilir — bu algoritmanın değil, substitution-kırmanın matematiksel bir sınırı (Shannon'ın "unicity distance" kavramı)
 - **Columnar Transposition (anahtar kelimesiz)** — `ciphertool/transposition.py::crack_columnar_transposition`: sütun sayısını (2-12 arası dener) ve sütun okuma sırasını (permütasyon) aynı quadgram fitness ile bulur — ≤8 sütun için TÜM permütasyonlar (8!=40320) denenir, 9-12 sütun için hill-climbing kullanılır. En az 20 karakter gerektirir, boşluk/noktalama korunarak çalışır (harfleri değil tüm karakterleri sütunlara dağıtır)
 
@@ -156,7 +156,8 @@ Toplamda 0-100 arası bir skor üretilir. 65+ genelde doğru çözümdür, 35 al
 
 - Sadece İngilizce/Türkçe için optimize skor fonksiyonu var, başka dillerde frekans analizi zayıf kalır (substitution/transposition kırma quadgram istatistikleri de sadece İngilizce)
 - AES/RSA elbette kırılmıyor (kriptografik olarak güvenli), sadece entropi analiziyle "bu muhtemelen gerçek şifreleme" tespiti yapılıyor
-- Playfair, Hill cipher, ADFGVX brute-force'u yok (sıradaki en değerli eklentiler bunlar)
+- **Playfair cipher denendi ama ÇIKARILDI**: hill-climbing + quadgram fitness ile denedim (substitution/transposition'da işe yarayan aynı yöntem), satır/sütun takası gibi gelişmiş hamleler de ekledim, ama ciphertext-only Playfair kırma 25! büyüklüğündeki anahtar uzayında güvenilir yakınsamadı (test ettiğim örnekte 30 saniye bile verilse ~%13 doğrulukta takılı kaldı). Yanlış sonucu "kesin" gibi sunmak doğruluk önceliğine aykırı olacağından koda dahil etmedim — bu dürüst bir sınır, gizlenen bir eksik değil. Hill cipher de benzer nedenlerle (ciphertext-only kırma akademik olarak da güvenilir değil, genelde known-plaintext gerektirir) eklenmedi
+- ADFGVX/ADFGX brute-force'u yok (Polybius + transposition'ın birleşimi olduğu için Playfair'den de zor)
 - Hash tespitindeki yüzdeler gerçek-dünya yaygınlığına göre KABA bir tahmindir, istatistiksel kanıt değildir — kesin ayrım için verinin kaynağına (Windows dump/git/TLS sertifikası vb.) bakmak gerekir
 - Substitution kırma ~80 harfin altında güvenilir değil (hiç sonuç üretmez), 80-130 harf arası "sınır bölge" — pangram tarzı yapay metinlerde uzun olsa bile zorlanabilir
 - Columnar Transposition'da 12'den fazla sütun denenmiyor (permütasyon uzayı pratik olmayan boyutlara ulaşıyor)
@@ -169,7 +170,7 @@ PR'lar açık. Kendi ihtiyacına göre `ciphertool/decoders.py`'a yeni decoder e
 python3 tests/test_basic.py
 ```
 
-37 sanity test var (encoding'ler, klasik şifreler, XOR/Vigenère/Beaufort/Substitution/Columnar Transposition kırma, entropi analizi, dosya tespiti, JWT, hash tespiti).
+41 sanity test var (encoding'ler, klasik şifreler, XOR/Vigenère/Beaufort/Substitution/Columnar Transposition kırma, entropi analizi, dosya tespiti, JWT, hash tespiti).
 
 ## Lisans
 

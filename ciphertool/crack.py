@@ -8,6 +8,7 @@ Bunlar CTF'lerde ve gercek pentest senaryolarinda (ozellikle XOR) cok sik karsil
 "encoding degil ama zayif sifreleme" kategorisi.
 """
 import string
+from typing import List
 
 from .scorer import score_text, chi_squared_english, printable_ratio, ENGLISH_FREQ
 from .decoders import caesar_shift
@@ -133,8 +134,16 @@ def _best_caesar_shift_for_column(col_letters) -> int:
 _ENGLISH_IC_THRESHOLD = 0.052  # rastgele (~0.038) ile Ingilizce (~0.067) arasi esik
 
 
-def guess_vigenere_keylen(letters, max_len: int = 20):
+def guess_vigenere_keylen_candidates(letters, max_len: int = 20, top_n: int = 4):
+    """Tek bir "en iyi tahmin" yerine BIRDEN FAZLA aday anahtar uzunlugu
+    dondurur (buyukten kucuge IC skoruna gore). Nedeni: IC tabanli tek-tahmin
+    yontemi bazen yanlis uzunluk seciyor (ozellikle kisa/orta metinlerde IC
+    skorlari birbirine yakin cikabiliyor) - bu fonksiyonu cagiran kod (crack_
+    vigenere/crack_beaufort) her adayi GERCEKTEN deneyip quadgram fitness ile
+    hangisinin gercekten okunabilir metin urettigini kontrol ediyor, boylece
+    yanlis IC tahmini tek basina yanlis sonuca goturmuyor."""
     scores = []
+    threshold_hit = None
     for klen in range(2, max_len + 1):
         ics = []
         for col in range(klen):
@@ -146,41 +155,66 @@ def guess_vigenere_keylen(letters, max_len: int = 20):
             continue
         avg_ic = sum(ics) / len(ics)
         scores.append((klen, avg_ic))
-        # esigi asan EN KUCUK uzunlugu tercih et - buyuk katlari (2x, 3x...)
-        # kucuk ornek boyutunda sans eseri daha yuksek IC verebiliyor, bu yanlis
-        # yonlendirir; en kucuk yeterli uzunluk hemen hemen her zaman dogrusu
-        if avg_ic >= _ENGLISH_IC_THRESHOLD:
-            return klen
+        if threshold_hit is None and avg_ic >= _ENGLISH_IC_THRESHOLD:
+            threshold_hit = klen
     if not scores:
-        return None
+        return []
     scores.sort(key=lambda t: t[1], reverse=True)
-    return scores[0][0]
+    candidates = []
+    if threshold_hit is not None:
+        candidates.append(threshold_hit)
+    for klen, _ in scores:
+        if klen not in candidates:
+            candidates.append(klen)
+        if len(candidates) >= top_n:
+            break
+    return candidates
+
+
+def guess_vigenere_keylen(letters, max_len: int = 20):
+    """Geriye-donuk uyumluluk icin: TEK bir tahmin dondurur (ilk aday)."""
+    candidates = guess_vigenere_keylen_candidates(letters, max_len, top_n=1)
+    return candidates[0] if candidates else None
 
 
 def crack_vigenere(ciphertext: str):
-    """(key_str, plaintext:str, score:float) dondurur, uygun degilse None."""
+    """(key_str, plaintext:str, score:float) dondurur, uygun degilse None.
+
+    Tek bir IC-tahmini anahtar uzunluguna korukorune guvenmek yerine EN IYI
+    birkac adayi (guess_vigenere_keylen_candidates) dener ve hangisinin
+    gercekten en okunabilir metni urettigini quadgram fitness ile dogrular.
+    Bu, IC'nin yanlis uzunluk sectigi durumlarda (kisa/orta metinlerde olur)
+    yanlis sonuc vermeyi onler - dogrulugu arttiran somut bir iyilestirme."""
+    from .ngram import quadgram_fitness
+
     letters_idx = [i for i, c in enumerate(ciphertext) if c.isalpha()]
     if len(letters_idx) < 20:
         return None
     letters = [ciphertext[i].upper() for i in letters_idx]
 
-    keylen = guess_vigenere_keylen(letters)
-    if not keylen:
+    candidates = guess_vigenere_keylen_candidates(letters)
+    if not candidates:
         return None
 
-    key_shifts = []
-    for col in range(keylen):
-        col_letters = letters[col::keylen]
-        key_shifts.append(_best_caesar_shift_for_column(col_letters))
+    best = None  # (fitness, key_str, plaintext, score)
+    for keylen in candidates:
+        key_shifts = []
+        for col in range(keylen):
+            col_letters = letters[col::keylen]
+            key_shifts.append(_best_caesar_shift_for_column(col_letters))
 
-    out = list(ciphertext)
-    for li, i in enumerate(letters_idx):
-        shift = key_shifts[li % keylen]
-        out[i] = caesar_shift(ciphertext[i], shift)
-    plaintext = "".join(out)
+        out = list(ciphertext)
+        for li, i in enumerate(letters_idx):
+            shift = key_shifts[li % keylen]
+            out[i] = caesar_shift(ciphertext[i], shift)
+        plaintext = "".join(out)
+        key_str = "".join(chr(65 + ((26 - s) % 26)) for s in key_shifts)
+        fit = quadgram_fitness(plaintext)
+        if best is None or fit > best[0]:
+            best = (fit, key_str, plaintext, score_text(plaintext))
 
-    key_str = "".join(chr(65 + ((26 - s) % 26)) for s in key_shifts)
-    return key_str, plaintext, score_text(plaintext)
+    _, key_str, plaintext, sc = best
+    return key_str, plaintext, sc
 
 
 # ---------------------------------------------------------------- Beaufort
@@ -210,35 +244,45 @@ def _best_beaufort_shift_for_column(col_letters) -> int:
 
 
 def crack_beaufort(ciphertext: str):
-    """(key_str, plaintext:str, score:float) dondurur, uygun degilse None."""
+    """(key_str, plaintext:str, score:float) dondurur, uygun degilse None.
+    crack_vigenere ile ayni mantik: tek IC-tahmini yerine coklu aday + quadgram
+    dogrulamasi."""
+    from .ngram import quadgram_fitness
+
     letters_idx = [i for i, c in enumerate(ciphertext) if c.isalpha()]
     if len(letters_idx) < 20:
         return None
     letters = [ciphertext[i].upper() for i in letters_idx]
 
-    keylen = guess_vigenere_keylen(letters)  # IC tabanli anahtar uzunlugu tahmini aynen kullanilabilir
-    if not keylen:
+    candidates = guess_vigenere_keylen_candidates(letters)
+    if not candidates:
         return None
 
-    key_shifts = []
-    for col in range(keylen):
-        col_letters = letters[col::keylen]
-        key_shifts.append(_best_beaufort_shift_for_column(col_letters))
+    best = None
+    for keylen in candidates:
+        key_shifts = []
+        for col in range(keylen):
+            col_letters = letters[col::keylen]
+            key_shifts.append(_best_beaufort_shift_for_column(col_letters))
 
-    out = list(ciphertext)
-    for li, i in enumerate(letters_idx):
-        shift = key_shifts[li % keylen]
-        c = ciphertext[i]
-        if c.isupper():
-            y = ord(c) - 65
-            out[i] = chr((key_shifts[li % keylen] - y) % 26 + 65)
-        else:
-            y = ord(c.upper()) - 65
-            out[i] = chr((key_shifts[li % keylen] - y) % 26 + 97)
-    plaintext = "".join(out)
+        out = list(ciphertext)
+        for li, i in enumerate(letters_idx):
+            c = ciphertext[i]
+            shift = key_shifts[li % keylen]
+            if c.isupper():
+                y = ord(c) - 65
+                out[i] = chr((shift - y) % 26 + 65)
+            else:
+                y = ord(c.upper()) - 65
+                out[i] = chr((shift - y) % 26 + 97)
+        plaintext = "".join(out)
+        key_str = "".join(chr(65 + s) for s in key_shifts)
+        fit = quadgram_fitness(plaintext)
+        if best is None or fit > best[0]:
+            best = (fit, key_str, plaintext, score_text(plaintext))
 
-    key_str = "".join(chr(65 + s) for s in key_shifts)
-    return key_str, plaintext, score_text(plaintext)
+    _, key_str, plaintext, sc = best
+    return key_str, plaintext, sc
 
 
 # ---------------------------------------------------------------- Genel Substitution Cipher (hill-climbing)

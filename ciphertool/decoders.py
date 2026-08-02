@@ -486,6 +486,57 @@ def try_base36(s: str):
     return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
+# ---------------------------------------------------------------- A1Z26 (harf-sayi kodu)
+
+def try_a1z26(s: str):
+    """A1Z26: A=1, B=2, ..., Z=26. Genelde '-' veya bosluk ile ayrilmis sayilar
+    olarak yazilir (orn. '8-5-12-12-15' -> 'HELLO'). CTF'lerde cok yaygin,
+    basit ama tanimasi kolay bir kod."""
+    s2 = s.strip()
+    if not s2:
+        return None
+    for sep in ["-", ",", " ", "."]:
+        if sep in s2:
+            parts = [p for p in s2.split(sep) if p != ""]
+            break
+    else:
+        return None  # ayiraci yoksa (orn "812") hangi sayinin nerede bittigi belirsiz, deneme
+    if len(parts) < 3:
+        return None
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if not all(1 <= n <= 26 for n in nums):
+        return None
+    return "".join(chr(64 + n) for n in nums)
+
+
+# ---------------------------------------------------------------- NATO fonetik alfabesi
+
+_NATO_MAP = {
+    "ALPHA": "A", "BRAVO": "B", "CHARLIE": "C", "DELTA": "D", "ECHO": "E",
+    "FOXTROT": "F", "GOLF": "G", "HOTEL": "H", "INDIA": "I", "JULIET": "J",
+    "JULIETT": "J", "KILO": "K", "LIMA": "L", "MIKE": "M", "NOVEMBER": "N",
+    "OSCAR": "O", "PAPA": "P", "QUEBEC": "Q", "ROMEO": "R", "SIERRA": "S",
+    "TANGO": "T", "UNIFORM": "U", "VICTOR": "V", "WHISKEY": "W", "XRAY": "X",
+    "X-RAY": "X", "YANKEE": "Y", "ZULU": "Z",
+}
+
+
+def try_nato_phonetic(s: str):
+    words = re.split(r"[\s,\-]+", s.strip().upper())
+    words = [w for w in words if w]
+    if len(words) < 3:
+        return None
+    out = []
+    for w in words:
+        if w not in _NATO_MAP:
+            return None
+        out.append(_NATO_MAP[w])
+    return "".join(out)
+
+
 # ---------------------------------------------------------------- Brute-force gerektiren klasik sifreler
 # Bunlar engine.py tarafinda ayri ele alinir (en iyi parametreyi bulup tek aday dondururler)
 # cunku anahtar uzayi buyuk / dinamik etiket gerektiriyor.
@@ -574,6 +625,8 @@ SINGLE_SHOT_DECODERS = [
     ("Quoted-Printable", try_quoted_printable, "encoding"),
     ("JWT", try_jwt, "encoding"),
     ("Polybius Square (5x5)", try_polybius, "cipher"),
+    ("A1Z26 (harf-sayı kodu)", try_a1z26, "cipher"),
+    ("NATO Fonetik Alfabesi", try_nato_phonetic, "cipher"),
     ("ROT13", try_rot13, "cipher"),
     ("ROT47", try_rot47, "cipher"),
     ("ROT5 (rakamlar)", try_rot5, "cipher"),
