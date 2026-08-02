@@ -149,14 +149,7 @@ def try_base91(s: str):
 
 
 # Motorun (engine.py) dosya imzasi taramasi icin kullandigi tum bytes-decoder'lar
-BYTES_DECODERS = [
-    ("Base64", try_base64_bytes),
-    ("Base64 (URL-safe)", try_base64_urlsafe_bytes),
-    ("Base32", try_base32_bytes),
-    ("Base85/Ascii85", try_base85_bytes),
-    ("Base58", try_base58_bytes),
-    ("Base91", try_base91_bytes),
-]
+# (BYTES_DECODERS asagida, tum fonksiyonlar tanimlandiktan sonra kayit ediliyor)
 
 
 # ---------------------------------------------------------------- Hex / Binary / Octal / Decimal
@@ -401,6 +394,98 @@ def try_bacon(s: str):
     return result if "?" not in result else None
 
 
+# ---------------------------------------------------------------- Polybius square
+
+_POLYBIUS_TABLE = {
+    "11": "A", "12": "B", "13": "C", "14": "D", "15": "E",
+    "21": "F", "22": "G", "23": "H", "24": "I", "25": "K",  # I/J birlesik
+    "31": "L", "32": "M", "33": "N", "34": "O", "35": "P",
+    "41": "Q", "42": "R", "43": "S", "44": "T", "45": "U",
+    "51": "V", "52": "W", "53": "X", "54": "Y", "55": "Z",
+}
+
+
+def try_polybius(s: str):
+    """5x5 Polybius square: her harf 2 rakamli (satir,sutun 1-5) koda karsilik gelir."""
+    s2 = re.sub(r"[\s,\-]", "", s.strip())
+    if not s2 or len(s2) % 2 != 0 or not re.fullmatch(r"[1-5]+", s2):
+        return None
+    if len(s2) < 6:
+        return None
+    out = []
+    for i in range(0, len(s2), 2):
+        pair = s2[i:i+2]
+        out.append(_POLYBIUS_TABLE.get(pair, "?"))
+    result = "".join(out)
+    return result if "?" not in result else None
+
+
+# ---------------------------------------------------------------- Base45 / Base36
+
+_BASE45_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+
+
+def try_base45_bytes(s: str):
+    """RFC 9285 Base45 (QR kod / EU COVID sertifikalarinda kullanilir)."""
+    s2 = s.strip().replace(" ", "")
+    if not s2 or len(s2) < 2 or not all(c in _BASE45_ALPHABET for c in s2.upper()):
+        return None
+    s2 = s2.upper()
+    try:
+        out = bytearray()
+        i = 0
+        n = len(s2)
+        while i < n:
+            if n - i >= 3:
+                c, d, e = s2[i], s2[i+1], s2[i+2]
+                x = (_BASE45_ALPHABET.index(c) + _BASE45_ALPHABET.index(d) * 45
+                     + _BASE45_ALPHABET.index(e) * 45 * 45)
+                if x > 65535:
+                    return None
+                out.append(x // 256)
+                out.append(x % 256)
+                i += 3
+            elif n - i == 2:
+                c, d = s2[i], s2[i+1]
+                x = _BASE45_ALPHABET.index(c) + _BASE45_ALPHABET.index(d) * 45
+                if x > 255:
+                    return None
+                out.append(x)
+                i += 2
+            else:
+                return None
+        return bytes(out)
+    except Exception:
+        return None
+
+
+def try_base45(s: str):
+    raw = try_base45_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+def try_base36_bytes(s: str):
+    """Base36 (0-9, A-Z) - buyuk sayilarin kompakt gosterimi icin kullanilir."""
+    s2 = s.strip()
+    if not s2 or len(s2) < 3 or not re.fullmatch(r"[0-9A-Za-z]+", s2):
+        return None
+    if s2.isdigit():
+        return None  # sadece rakamsa decimal ile karisir, base36 olarak zorlama
+    try:
+        num = int(s2, 36)
+        if num == 0:
+            return None
+        raw = num.to_bytes((num.bit_length() + 7) // 8, "big")
+        return raw
+    except Exception:
+        return None
+
+
+def try_base36(s: str):
+    raw = try_base36_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
 # ---------------------------------------------------------------- Brute-force gerektiren klasik sifreler
 # Bunlar engine.py tarafinda ayri ele alinir (en iyi parametreyi bulup tek aday dondururler)
 # cunku anahtar uzayi buyuk / dinamik etiket gerektiriyor.
@@ -459,7 +544,17 @@ def try_all_rail_fence(s: str, max_rails: int = 8):
 
 # ---------------------------------------------------------------- Kayit defteri
 
-# (isim, fonksiyon, "encoding" veya "cipher")
+BYTES_DECODERS = [
+    ("Base64", try_base64_bytes),
+    ("Base64 (URL-safe)", try_base64_urlsafe_bytes),
+    ("Base32", try_base32_bytes),
+    ("Base85/Ascii85", try_base85_bytes),
+    ("Base58", try_base58_bytes),
+    ("Base91", try_base91_bytes),
+    ("Base45", try_base45_bytes),
+    ("Base36", try_base36_bytes),
+]
+
 SINGLE_SHOT_DECODERS = [
     ("Base64", try_base64, "encoding"),
     ("Base64 (URL-safe)", try_base64_urlsafe, "encoding"),
@@ -467,6 +562,8 @@ SINGLE_SHOT_DECODERS = [
     ("Base85/Ascii85", try_base85, "encoding"),
     ("Base58", try_base58, "encoding"),
     ("Base91", try_base91, "encoding"),
+    ("Base45", try_base45, "encoding"),
+    ("Base36", try_base36, "encoding"),
     ("Hex (Base16)", try_hex, "encoding"),
     ("Binary (8-bit)", try_binary, "encoding"),
     ("Octal", try_octal, "encoding"),
@@ -476,6 +573,7 @@ SINGLE_SHOT_DECODERS = [
     ("Unicode/Hex Escape (\\u, \\x)", try_unicode_escape, "encoding"),
     ("Quoted-Printable", try_quoted_printable, "encoding"),
     ("JWT", try_jwt, "encoding"),
+    ("Polybius Square (5x5)", try_polybius, "cipher"),
     ("ROT13", try_rot13, "cipher"),
     ("ROT47", try_rot47, "cipher"),
     ("ROT5 (rakamlar)", try_rot5, "cipher"),

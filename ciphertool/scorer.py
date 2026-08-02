@@ -70,10 +70,15 @@ def chi_squared_english(s: str) -> float:
 
 
 def word_match_score(s: str) -> float:
+    """Kelime eslesmesi puani. 2 harfli Turkce baglaclar ('de','da','mi'...) KISA
+    rastgele ciktilarda (orn. bir sifre zincirinin yanlislikla urettigi 2 karakterlik
+    string) tesadufen cok sik eslesip yanlis-pozitif yuksek skor uretiyordu - bu
+    yuzden <3 harfli kelimeler kredi HAK ETMEZ, sadece >=3 harfli gercek kelime
+    eslesmeleri sayilir."""
     words = _word_re.findall(s.lower())
     if not words:
         return 0.0
-    hits = sum(1 for w in words if w in COMMON_WORDS)
+    hits = sum(1 for w in words if len(w) >= 3 and w in COMMON_WORDS)
     return hits / max(len(words), 1)
 
 
@@ -113,22 +118,28 @@ def index_of_coincidence(s: str) -> float:
 def score_text(s: str) -> float:
     """
     0-100 arasi skor dondurur. Yuksek skor = daha okunabilir/anlamli metin.
+
+    Onemli: kisa/seyrek harfli girdilerde (orn. bir hash'i yanlislikla Caesar/Affine
+    ile "kirmaya" calisinca ortaya cikan yari-rastgele string) chi-kare + bigram
+    testleri yanlislikla orta seviyede (35-45) puan verebiliyordu - bu YANLIS
+    GUVEN veriyordu. Asagidaki "gurultu tavani" bunu onluyor: gercek kelime
+    eslesmesi yoksa VE bigram sinyali zayifsa, toplam skor sert sekilde
+    sinirlaniyor (noise ceiling).
     """
     if not s:
         return 0.0
 
     pr = printable_ratio(s)
     if pr < 0.85:
-        # Cogunlukla binary / bozuk decode -> dusuk oncelik ama sifir da degil
-        # (dosya tespiti ayri bir mekanizma ile ayrica yuksek puanla isaretlenir)
         return round(pr * 15, 2)
 
+    letters = [c for c in s if c.isalpha()]
+    n_letters = len(letters)
+
     chi2 = chi_squared_english(s)
-    # chi2 kucukse (0'a yakin) Ingilizce'ye cok benziyor demektir.
     chi_score = max(0.0, 25.0 - min(chi2, 400) / 16.0)
 
     bg_score = bigram_score(s)
-
     word_score = word_match_score(s) * 25.0
 
     sp = space_ratio(s)
@@ -137,6 +148,18 @@ def score_text(s: str) -> float:
     printable_score = pr * 15.0
 
     total = chi_score + bg_score + word_score + space_score + printable_score
+
+    # Gurultu tavani: az harf var (hex/hash gibi kisa alfa oranli girdi), gercek
+    # kelime eslesmesi yok ve bigram sinyali zayifsa -> bu buyuk ihtimalle
+    # rastgele/anlamsiz cikti, chi-kare'nin sans eseri dusuk gelmesine ragmen
+    # skoru 20'nin ustune cikarma.
+    if word_score == 0 and bg_score < 8:
+        total = min(total, 18.0)
+    # Cok az harf (n<10) uzerinden hesaplanan chi-kare/bigram istatistiksel
+    # olarak guvenilmez - kelime eslesmesi yoksa ek tavan uygula.
+    if n_letters < 10 and word_score == 0:
+        total = min(total, 15.0)
+
     return round(min(total, 100.0), 2)
 
 

@@ -11,6 +11,7 @@ v2 eklentileri:
 """
 import base64
 import binascii
+import re
 import time
 from dataclasses import dataclass
 from typing import List, Optional
@@ -21,7 +22,8 @@ from .decoders import (
 )
 from .scorer import score_text
 from .filesig import detect_file_signature
-from .crack import crack_single_byte_xor, crack_repeating_xor, crack_vigenere
+from .crack import crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort
+from .hashid import identify_hash
 
 
 @dataclass
@@ -44,6 +46,28 @@ HIGH_CONFIDENCE_FLOOR = 88.0
 
 def _is_meaningfully_different(a: str, b: str) -> bool:
     return a.strip() != b.strip() and len(b.strip()) > 0
+
+
+def _hash_skip_level(raw: str) -> str:
+    """'none' | 'ciphers_only' | 'all' dondurur.
+    - 'all': yapisal olarak KESIN bir hash/KDF formati (bcrypt, argon2, md5crypt...)
+      -> hicbir decode/cipher denemesi anlamli degil, hepsi atlanir.
+    - 'ciphers_only': sadece uzunluktan tahmin edilen belirsiz hex hash adayi
+      -> klasik sifre kirma (Caesar/Vigenere/XOR/Affine) atlanir ama encoding
+      denemelerine (Base64 vb.) izin verilir, cunku ayni hex string teorik
+      olarak baska bir seyin encode edilmis hali de olabilir.
+    - 'none': hash/KDF'ye benzemiyor, normal tarama yapilir.
+    """
+    s = raw.strip()
+    candidates = identify_hash(s)
+    if not candidates:
+        return "none"
+    if any(c.certain for c in candidates):
+        return "all"
+    stripped = re.sub(r"\s", "", s)
+    if re.fullmatch(r"[0-9A-Fa-f]+", stripped):
+        return "ciphers_only"
+    return "none"
 
 
 def _check_file_signature(text: str):
@@ -85,6 +109,11 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
     results: List[Candidate] = []
     budget = _Budget()
 
+    # Hash/KDF gibi gorunen girdilerde gereksiz/anlamsiz decode denemelerini atla
+    skip_level = _hash_skip_level(raw)  # "none" | "ciphers_only" | "all"
+    skip_all = skip_level == "all"
+    skip_ciphers = skip_level in ("all", "ciphers_only")
+
     def recurse(text: str, chain: List[str], depth: int):
         if budget.exhausted():
             return
@@ -113,16 +142,23 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
 
         if depth == max_depth or budget.exhausted():
             return
+        if skip_all:
+            return  # yapisal olarak KESIN hash -> hicbir decode denemesi yapilmaz
 
         for name, fn, kind in SINGLE_SHOT_DECODERS:
             if budget.exhausted():
                 return
+            if skip_ciphers and kind == "cipher":
+                continue  # Caesar/ROT/Atbash/Morse/Bacon vb. - hash'te anlamsiz
             try:
                 out = fn(text)
             except Exception:
                 out = None
             if out and _is_meaningfully_different(text, out):
                 recurse(out, chain + [name], depth + 1)
+
+        if skip_ciphers:
+            return  # Caesar brute-force de dahil hicbir klasik sifre denemesi yok
 
         try:
             caesar_results = try_all_caesar(text)
@@ -138,7 +174,17 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
 
     recurse(raw.strip(), [], 0)
 
-    _run_expensive_analyzers(raw.strip(), results)
+    if not skip_ciphers:
+        _run_expensive_analyzers(raw.strip(), results)
+    else:
+        reason = ("Girdi yapısal olarak KESIN bir hash/KDF formatına uyuyor (bkz. Karakter Seti Analizi)."
+                   if skip_all else
+                   "Girdi, uzunluğuyla bilinen bir hash formatına (MD5/SHA1/SHA256 ailesi vb.) uyuyor.")
+        results.append(Candidate(
+            chain=["(klasik şifre kırma denemeleri atlandı)"],
+            text=f"{reason} Hash'ler tek yönlüdür; Caesar/Vigenère/Beaufort/XOR/Affine gibi klasik "
+                 "şifre kırma teknikleriyle 'çözülmeye' çalışılması anlamsız gürültü üretir, o yüzden atlandı.",
+            score=5.0, kind="info"))
 
     results.append(Candidate(chain=["(decode uygulanmadı - orijinal metin)"], text=raw.strip(),
                               score=score_text(raw.strip()), kind="original"))
@@ -214,6 +260,16 @@ def _run_expensive_analyzers(raw: str, results: List[Candidate]):
             key_str, text, sc = vig
             results.append(Candidate(
                 chain=[f"Vigenère kırma (anahtar tahmini: {key_str})"],
+                text=text, score=sc))
+    except Exception:
+        pass
+
+    try:
+        beau = crack_beaufort(raw)
+        if beau:
+            key_str, text, sc = beau
+            results.append(Candidate(
+                chain=[f"Beaufort kırma (anahtar tahmini: {key_str})"],
                 text=text, score=sc))
     except Exception:
         pass

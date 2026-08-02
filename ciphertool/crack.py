@@ -181,3 +181,61 @@ def crack_vigenere(ciphertext: str):
 
     key_str = "".join(chr(65 + ((26 - s) % 26)) for s in key_shifts)
     return key_str, plaintext, score_text(plaintext)
+
+
+# ---------------------------------------------------------------- Beaufort
+# Beaufort, Vigenere'in "aynasi": P = K - C (mod 26) yerine Vigenere'de C = P + K.
+# Beaufort'ta sifreleme VE sifre cozme AYNI islemdir: P = K - C (mod 26).
+# Vigenere kirici ile ayni IC/Kasiski mantigini kullanir, sadece sutun kirma
+# formulu farkli oldugu icin ayri bir fonksiyon gerekir - karistirilirsa
+# (Vigenere kiricisiyla Beaufort denemek) sonuc hep anlamsiz cikar, bu yuzden
+# CTF'lerde "Vigenere gibi ama Vigenere kirici tutmuyor" durumunda akla gelmeli.
+
+def beaufort_decrypt_column(col_letters, shift) -> str:
+    out = []
+    for c in col_letters:
+        y = ord(c) - 65
+        out.append(chr((shift - y) % 26 + 65))
+    return "".join(out)
+
+
+def _best_beaufort_shift_for_column(col_letters) -> int:
+    best_shift, best_chi = 0, float("inf")
+    for shift in range(26):
+        shifted = beaufort_decrypt_column(col_letters, shift)
+        chi = chi_squared_english(shifted)
+        if chi < best_chi:
+            best_chi, best_shift = chi, shift
+    return best_shift
+
+
+def crack_beaufort(ciphertext: str):
+    """(key_str, plaintext:str, score:float) dondurur, uygun degilse None."""
+    letters_idx = [i for i, c in enumerate(ciphertext) if c.isalpha()]
+    if len(letters_idx) < 20:
+        return None
+    letters = [ciphertext[i].upper() for i in letters_idx]
+
+    keylen = guess_vigenere_keylen(letters)  # IC tabanli anahtar uzunlugu tahmini aynen kullanilabilir
+    if not keylen:
+        return None
+
+    key_shifts = []
+    for col in range(keylen):
+        col_letters = letters[col::keylen]
+        key_shifts.append(_best_beaufort_shift_for_column(col_letters))
+
+    out = list(ciphertext)
+    for li, i in enumerate(letters_idx):
+        shift = key_shifts[li % keylen]
+        c = ciphertext[i]
+        if c.isupper():
+            y = ord(c) - 65
+            out[i] = chr((key_shifts[li % keylen] - y) % 26 + 65)
+        else:
+            y = ord(c.upper()) - 65
+            out[i] = chr((key_shifts[li % keylen] - y) % 26 + 97)
+    plaintext = "".join(out)
+
+    key_str = "".join(chr(65 + s) for s in key_shifts)
+    return key_str, plaintext, score_text(plaintext)
