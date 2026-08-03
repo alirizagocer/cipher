@@ -582,6 +582,125 @@ def test_json_output_has_hash_candidates():
     assert data["hash_candidates"][0]["certain"] is True
 
 
+# ---- Yeni ozellik testleri (v8) ----
+
+def test_yenc_decode_bytes():
+    """yEnc bytes decode testi: =ybegin...=yend blogu."""
+    from ciphertool.decoders import try_yenc_bytes
+    original = b"Hello World"
+    encoded_bytes = bytes((b + 42) % 256 for b in original)
+    yenc_block = "=ybegin line=128 size=11 name=test.txt\n" + encoded_bytes.decode("latin-1") + "\n=yend size=11"
+    result = try_yenc_bytes(yenc_block)
+    assert result is not None
+    assert result == original
+
+
+def test_yenc_decode_text():
+    """yEnc text decode testi - okunabilir karakter uretiyor mu."""
+    from ciphertool.decoders import try_yenc
+    original = b"TESTDATA"
+    encoded_bytes = bytes((b + 42) % 256 for b in original)
+    yenc_block = "=ybegin line=128 size=8 name=file.bin\n" + encoded_bytes.decode("latin-1") + "\n=yend size=8"
+    result = try_yenc(yenc_block)
+    assert result is not None
+    assert "TESTDATA" in result
+
+
+def test_yenc_no_header_returns_none():
+    """yEnc baslik olmadan None donmeli."""
+    from ciphertool.decoders import try_yenc
+    assert try_yenc("just some random text without header") is None
+    assert try_yenc("begin 644 file.txt\nsome data\nend") is None  # uuencode, yEnc degil
+
+
+def test_baudot_binary_groups():
+    """Baudot/ITA2 boslukla ayrili 5-bitlik binary gruplar - HELLO decode."""
+    from ciphertool.decoders import try_baudot
+    # ITA2 letters: H=0x14=10100, E=0x01=00001, L=0x12=10010, L=0x12=10010, O=0x18=11000
+    baudot_hello = "10100 00001 10010 10010 11000"
+    result = try_baudot(baudot_hello)
+    assert result is not None
+    assert "HELLO" in result.upper()
+
+
+def test_baudot_decimal_values():
+    """Baudot/ITA2 decimal deger formatı."""
+    from ciphertool.decoders import try_baudot
+    # H=20, E=1, L=18, L=18, O=24 decimal olarak
+    result = try_baudot("20 1 18 18 24")
+    assert result is not None
+    assert "HELLO" in result.upper()
+
+
+def test_baudot_continuous_binary():
+    """Baudot/ITA2 bosluksuz binary (5'in kati uzunluk)."""
+    from ciphertool.decoders import try_baudot
+    # H E L L O = 10100 00001 10010 10010 11000 (birlesik)
+    result = try_baudot("1010000001100101001011000")
+    assert result is not None
+    assert "HELLO" in result.upper()
+
+
+def test_baudot_too_short_returns_none():
+    """Baudot icin yetersiz grup sayisi None donmeli."""
+    from ciphertool.decoders import try_baudot
+    # Sadece 2 grup (< 3 threshold)
+    assert try_baudot("10100 00001") is None
+
+
+def test_baudot_figures_shift():
+    """Baudot/ITA2 FIGS shift: rakamlari dogru decode etmeli."""
+    from ciphertool.decoders import try_baudot
+    # FIGS=11011(27), '3'=00001(1 figures), '7'=00111(7 figures), '9'=11000(24 figures)
+    result = try_baudot("11011 00001 00111 11000 11111 00001")
+    assert result is not None
+    # '3', '7', '9' rakamlari uretmeli
+    assert any(d in result for d in ["3", "7", "9"])
+
+
+def test_charset_detects_adfgvx():
+    """ADFGVX karakter seti charset analizinde tespit edilmeli."""
+    from ciphertool.charset import analyze_charset
+    # Sadece ADFGVX harfleri, cift uzunluk, 10+ karakter
+    adfgvx_sample = "ADFGVXFADVGXDAGXVFGXAD"
+    notes = analyze_charset(adfgvx_sample)
+    assert any("ADFGVX" in n for n in notes), f"Notlar: {notes}"
+
+
+def test_charset_detects_adfgx():
+    """ADFGX (4 harf, ADFGVX oncesi) karakter seti tespiti."""
+    from ciphertool.charset import analyze_charset
+    # Sadece ADFG harfleri, cift uzunluk
+    adfgx_sample = "ADFGDAFGFGADADFGDAFG"
+    notes = analyze_charset(adfgx_sample)
+    assert any("ADFG" in n for n in notes), f"Notlar: {notes}"
+
+
+def test_charset_detects_yenc_header():
+    """yEnc baslik charset analizinde tespit edilmeli."""
+    from ciphertool.charset import analyze_charset
+    yenc_text = "=ybegin line=128 size=1234 name=file.bin\nsome data\n=yend size=1234"
+    notes = analyze_charset(yenc_text)
+    assert any("yEnc" in n or "ybegin" in n.lower() for n in notes), f"Notlar: {notes}"
+
+
+def test_charset_detects_baudot_binary_groups():
+    """Baudot 5-bit binary grup formati charset analizinde tespit edilmeli."""
+    from ciphertool.charset import analyze_charset
+    baudot_text = "10100 00001 10010 10010 11000 10000 11000"
+    notes = analyze_charset(baudot_text)
+    assert any("Baudot" in n or "ITA2" in n or "5-bit" in n for n in notes), f"Notlar: {notes}"
+
+
+def test_engine_decodes_baudot_via_explore():
+    """Engine, Baudot formatini explore() icerisinde decode edebilmeli."""
+    from ciphertool.engine import explore
+    baudot_hello = "10100 00001 10010 10010 11000"
+    results = explore(baudot_hello, max_depth=2, top_n=10)
+    texts = [r.text.upper() for r in results]
+    assert any("HELLO" in t for t in texts), f"HELLO bulunamadi, ilk 3 sonuc: {texts[:3]}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     failed = 0

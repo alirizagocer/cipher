@@ -683,6 +683,158 @@ def try_z85(s: str):
     return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
+# ---------------------------------------------------------------- yEnc (Usenet binary encoding)
+# Newsgroup'larda binary dosyalari text olarak dagitmak icin kullanilir.
+# Format: her byte'a 42 eklenir (mod 256); "=" escape karakteri sonrasinda
+# byte XOR 64 yapilip 42 eklenir. Baslik: "=ybegin", bitis: "=yend".
+# CTF'lerde ve eski newsgroup arsivlerinde karsilasilan bir encoding.
+
+def try_yenc_bytes(s: str):
+    """yEnc decode. =ybegin baslik satiri zorunlu. =yend opsiyonel.
+    Bos veya baslik icermeyen girdilerde None doner."""
+    s2 = s.strip()
+    if not s2 or "=ybegin" not in s2.lower():
+        return None
+    lines = s2.splitlines()
+    begin_idx = None
+    end_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip().lower()
+        if stripped.startswith("=ybegin"):
+            begin_idx = i
+        elif stripped.startswith("=yend"):
+            end_idx = i
+            break
+    if begin_idx is None:
+        return None
+    data_start = begin_idx + 1
+    # =ypart satiri varsa atla
+    if data_start < len(lines) and lines[data_start].strip().lower().startswith("=ypart"):
+        data_start += 1
+    data_end = end_idx if end_idx is not None else len(lines)
+    if data_start >= data_end:
+        return None
+    out = bytearray()
+    for line in lines[data_start:data_end]:
+        i = 0
+        while i < len(line):
+            c = line[i]
+            if c == "=":
+                i += 1
+                if i < len(line):
+                    # Escaped byte: (ord(c) - 64 - 42) mod 256
+                    # = sonraki karakterin degerini 64 ile XOR et, sonra 42 cikar
+                    b = (ord(line[i]) - 64 - 42) % 256
+                    out.append(b)
+            else:
+                b = (ord(c) - 42) % 256
+                out.append(b)
+            i += 1
+    return bytes(out) if out else None
+
+
+def try_yenc(s: str):
+    raw = try_yenc_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+# ---------------------------------------------------------------- Baudot / ITA2 (5-bit teleprinter kodu)
+# ITA2 (International Telegraph Alphabet No. 2) = modern Baudot standardi.
+# Her karakter 5 bit (0-31 arasi). Iki "shift" durumu: LETTERS ve FIGURES.
+# 11011 = FIGS shift, 11111 = LTRS shift.
+# Giris formatlari: (1) boslukla ayrili 5'li binary gruplar "00001 10100 ..."
+#                   (2) boslukla ayrili decimal degerler "1 20 ..."
+#                   (3) bosluksuz 5'in kati binary string "0000110100..."
+# CTF'lerde ve tarihi metin kodlamalarinda gorulebilir.
+
+# ITA2 Letters shift tablosu (kod -> harf)
+_ITA2_LETTERS = {
+    0x00: "\0", 0x01: "E",  0x02: "\n", 0x03: "A",  0x04: " ",  0x05: "S",
+    0x06: "I",  0x07: "U",  0x08: "\r", 0x09: "D",  0x0A: "R",  0x0B: "J",
+    0x0C: "N",  0x0D: "F",  0x0E: "C",  0x0F: "K",  0x10: "T",  0x11: "Z",
+    0x12: "L",  0x13: "W",  0x14: "H",  0x15: "Y",  0x16: "P",  0x17: "Q",
+    0x18: "O",  0x19: "B",  0x1A: "G",  0x1B: None,  # FIGS
+    0x1C: "M",  0x1D: "X",  0x1E: "V",  0x1F: None,  # LTRS
+}
+
+# ITA2 Figures shift tablosu
+_ITA2_FIGURES = {
+    0x00: "\0", 0x01: "3",  0x02: "\n", 0x03: "-",  0x04: " ",  0x05: "'",
+    0x06: "8",  0x07: "7",  0x08: "\r", 0x09: "\x05", 0x0A: "4",  0x0B: "\a",
+    0x0C: ",",  0x0D: "!",  0x0E: ":",  0x0F: "(",  0x10: "5",  0x11: "\"",
+    0x12: ")",  0x13: "2",  0x14: "#",  0x15: "6",  0x16: "0",  0x17: "1",
+    0x18: "9",  0x19: "?",  0x1A: "&",  0x1B: None,  # FIGS (no-op)
+    0x1C: ".",  0x1D: "/",  0x1E: ";",  0x1F: None,  # LTRS
+}
+
+_FIGS_CODE = 0x1B
+_LTRS_CODE = 0x1F
+
+
+def _baudot_decode_codes(codes: list) -> str:
+    """ITA2 kod listesini (0-31 arasi tamsayilar) decode eder."""
+    out = []
+    in_figures = False
+    for code in codes:
+        if code == _FIGS_CODE:
+            in_figures = True
+            continue
+        if code == _LTRS_CODE:
+            in_figures = False
+            continue
+        table = _ITA2_FIGURES if in_figures else _ITA2_LETTERS
+        ch = table.get(code)
+        if ch is None:
+            continue  # gecersiz/kontrol karakteri
+        if ch == "\0" or ch == "\r":
+            continue  # NUL ve CR'yi atla
+        out.append(ch)
+    return "".join(out)
+
+
+def try_baudot(s: str):
+    """ITA2/Baudot decode. 3 format desteklenir:
+    1) Boslukla ayrili 5-bitlik binary gruplar: '00001 00011 ...'
+    2) Bosluksuz 5'in kati binary string: '0000100011...'
+    3) Boslukla ayrili decimal degerler (0-31 arasi): '1 3 5 ...'
+    En az 3 gecerli karakter uretilmezse None doner."""
+    s2 = s.strip()
+    if not s2:
+        return None
+
+    codes = []
+
+    # Format 1: boslukla ayrili 5-bitlik binary gruplar
+    parts = s2.split()
+    if parts and all(re.fullmatch(r"[01]{5}", p) for p in parts) and len(parts) >= 3:
+        codes = [int(p, 2) for p in parts]
+
+    # Format 2: bosluksuz binary (5'in kati uzunluk)
+    elif re.fullmatch(r"[01]+", s2) and len(s2) % 5 == 0 and len(s2) >= 15:
+        codes = [int(s2[i:i+5], 2) for i in range(0, len(s2), 5)]
+
+    # Format 3: decimal degerler (0-31 arasi)
+    elif parts and all(re.fullmatch(r"\d{1,2}", p) for p in parts) and len(parts) >= 3:
+        try:
+            vals = [int(p) for p in parts]
+            if all(0 <= v <= 31 for v in vals):
+                codes = vals
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if not codes:
+        return None
+
+    result = _baudot_decode_codes(codes)
+    # En az 3 anlamli karakter olmali (NUL/kontrol haric)
+    meaningful = [c for c in result if c.strip() or c in (" ",)]
+    if len(meaningful) < 3:
+        return None
+    return result.strip() if result.strip() else None
+
+
 # ---------------------------------------------------------------- Kayit defteri
 
 BYTES_DECODERS = [
@@ -696,6 +848,7 @@ BYTES_DECODERS = [
     ("Base36", try_base36_bytes),
     ("uuencode", try_uuencode_bytes),
     ("z85 (ZeroMQ)", try_z85_bytes),
+    ("yEnc", try_yenc_bytes),
 ]
 
 SINGLE_SHOT_DECODERS = [
@@ -709,6 +862,8 @@ SINGLE_SHOT_DECODERS = [
     ("Base36", try_base36, "encoding"),
     ("uuencode", try_uuencode, "encoding"),
     ("z85 (ZeroMQ)", try_z85, "encoding"),
+    ("yEnc", try_yenc, "encoding"),
+    ("Baudot/ITA2 (5-bit)", try_baudot, "encoding"),
     ("Hex (Base16)", try_hex, "encoding"),
     ("Binary (8-bit)", try_binary, "encoding"),
     ("Octal", try_octal, "encoding"),

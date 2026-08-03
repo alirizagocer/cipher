@@ -109,6 +109,47 @@ def _detect_pem_fingerprint(s: str):
     return None
 
 
+
+def _detect_adfgvx(s: str):
+    """ADFGVX veya ADFGX sifresi: sadece ilgili harflerden olusan, cift uzunluklu metin."""
+    s2 = re.sub(r"\s", "", s.strip()).upper()
+    if len(s2) < 10:
+        return None
+    if re.fullmatch(r"[ADFGVX]+", s2) and len(s2) % 2 == 0:
+        return (
+            "Sadece A,D,F,G,V,X harfleri, çift uzunluk → ADFGVX şifre adayı "
+            "(WW1 Alman şifresi: Polybius 6x6 karesi + sütunsal transposition). "
+            "NOT: ciphertext-only kırma Playfair gibi güvenilir değil — context (nereden geldi, "
+            "anahtar kelime ipucu) olmadan kırılması pratik değil."
+        )
+    if re.fullmatch(r"[ADFG]+", s2) and len(s2) % 2 == 0 and len(s2) >= 10:
+        return (
+            "Sadece A,D,F,G harfleri, çift uzunluk → ADFGX şifre adayı "
+            "(ADFGVX'in önceki versiyonu, 5x5 Polybius karesi + transposition). "
+            "NOT: ADFGVX ile aynı kırma güçlüğü — anahtar olmadan tespit edilebilir ama kırılması pratik değil."
+        )
+    return None
+
+
+def _detect_yenc_header(s: str):
+    """yEnc encoding baslik kontrolu."""
+    if re.search(r"^=ybegin\s", s.strip(), re.IGNORECASE | re.MULTILINE):
+        return "yEnc başlığı tespit edildi (=ybegin) → Usenet newsgroup binary encoding, decode edilebilir."
+    return None
+
+
+def _detect_baudot_format(s: str):
+    """Baudot/ITA2 5-bitlik binary grup formatı heuristic tespiti."""
+    parts = s.strip().split()
+    # En az 5 grup, hepsi 5 bitlik binary
+    if len(parts) >= 5 and all(re.fullmatch(r"[01]{5}", p) for p in parts):
+        return (
+            f"Boslukla ayrılmış 5-bitlik binary gruplar ({len(parts)} grup) → "
+            "Baudot/ITA2 teleprinter kodu adayı (her grup 0-31 arası ITA2 karakter kodu)."
+        )
+    return None
+
+
 FORMAT_DETECTORS = [
     _detect_pem,
     _detect_iban,
@@ -117,6 +158,9 @@ FORMAT_DETECTORS = [
     _detect_ipv6,
     _detect_uuencode_header,
     _detect_pem_fingerprint,
+    _detect_adfgvx,
+    _detect_yenc_header,
+    _detect_baudot_format,
 ]
 
 

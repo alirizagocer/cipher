@@ -2,16 +2,16 @@
 
 ## English summary
 
-identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system. **v7 adds crib-dragging (known-plaintext attacks for XOR/Vigenère), uuencode/z85 decoding, and format-signature detection (PEM, IBAN, Luhn/credit card, MAC address).**
+identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system. **v8 adds yEnc (Usenet) and Baudot/ITA2 (teleprinter) decoding, plus ADFGVX/ADFGX cipher recognition (65 tests, all passing).**
 
 Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, hash mı, XOR ile mi şifrelenmiş...) bu araç:
 
-1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID, **PEM sertifika**, **IBAN**, **kredi kartı Luhn**, **MAC adresi** dahil)
+1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID, **PEM sertifika**, **IBAN**, **kredi kartı Luhn**, **MAC adresi**, **ADFGVX/ADFGX şifre**, **yEnc başlığı**, **Baudot 5-bit gruplar** dahil)
 2. **Hash/KDF tespitini pattern-veritabanıyla yapar** — bcrypt/argon2/md5crypt/sha512crypt/Django PBKDF2 gibi yapısal olarak KESİN formatları %95+ güvenle tek adayla söyler; sadece hex uzunluğundan ayırt edilebilen durumlarda (örn. 32 hex → MD5 mi NTLM mi MD4 mü) TÜM adayları ayrı ayrı, gerçek-dünya yaygınlığına göre ağırlıklandırılmış yüzdelerle sıralar — asla "bunlardan biri" diye geçiştirmez
 3. **Genel substitution cipher'ları anahtar kelimesiz kırar** (quipqiup tarzı hill-climbing + gerçek İngilizce quadgram istatistikleri — ~389.000 quadgram, ~4.2 milyar sayım içeren practicalcryptography.com korpusu) — 26! büyüklüğündeki anahtar uzayında rastgele-takas + çoklu-restart ile arama yapar, en az ~60 harflik metinlerde güvenilir sonuç verir
 4. **Columnar Transposition cipher'ları anahtar kelimesiz kırar** — sütun sayısını (2-12) ve okuma sırasını (permütasyon) aynı quadgram fitness ile brute-force/hill-climbing yaparak bulur
 5. **Entropi analizi ile "gerçek şifreleme mi yoksa çözülebilir encoding mi" ayrımını yapar** — Shannon entropi (örneklem-boyutu düzeltmeli), AES-ECB modu işareti olan 16-byte blok tekrarı tespiti dahil
-6. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, **uuencode**, **z85 (ZeroMQ)**, Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
+6. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, **uuencode**, **z85 (ZeroMQ)**, **yEnc** (Usenet), **Baudot/ITA2** (5-bit teleprinter), Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
 7. **Anahtar gerektiren zayıf şifrelemeleri brute-force ile kırar**: XOR (tek-byte ve tekrarlayan anahtar — artık **quadgram fitness ile doğrulama**, Vigenère/Beaufort ile aynı strateji), Vigenère ve Beaufort (IC + quadgram ile), Rail Fence, Affine
 8. **[YENİ] Crib-dragging (bilinen parça saldırısı)**: `--crib 'flag{'` gibi bilinen bir metin parçası verilirse XOR/Vigenère anahtarını bu ipucundan türetip doğrular — CTF'lerde yaygın, tespiti güçlendiren bir teknik
 9. **Dosya imzası (magic byte) tespiti** — decode edilen veri aslında bir PNG/ZIP/PDF/ELF/GZIP dosyasıysa bunu anında söyler
