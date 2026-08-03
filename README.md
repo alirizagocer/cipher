@@ -2,25 +2,27 @@
 
 ## English summary
 
-identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system.
+identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system. **v7 adds crib-dragging (known-plaintext attacks for XOR/Vigenère), uuencode/z85 decoding, and format-signature detection (PEM, IBAN, Luhn/credit card, MAC address).**
 
 Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, hash mı, XOR ile mi şifrelenmiş...) bu araç:
 
-1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID dahil)
+1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID, **PEM sertifika**, **IBAN**, **kredi kartı Luhn**, **MAC adresi** dahil)
 2. **Hash/KDF tespitini pattern-veritabanıyla yapar** — bcrypt/argon2/md5crypt/sha512crypt/Django PBKDF2 gibi yapısal olarak KESİN formatları %95+ güvenle tek adayla söyler; sadece hex uzunluğundan ayırt edilebilen durumlarda (örn. 32 hex → MD5 mi NTLM mi MD4 mü) TÜM adayları ayrı ayrı, gerçek-dünya yaygınlığına göre ağırlıklandırılmış yüzdelerle sıralar — asla "bunlardan biri" diye geçiştirmez
 3. **Genel substitution cipher'ları anahtar kelimesiz kırar** (quipqiup tarzı hill-climbing + gerçek İngilizce quadgram istatistikleri — ~389.000 quadgram, ~4.2 milyar sayım içeren practicalcryptography.com korpusu) — 26! büyüklüğündeki anahtar uzayında rastgele-takas + çoklu-restart ile arama yapar, en az ~60 harflik metinlerde güvenilir sonuç verir
 4. **Columnar Transposition cipher'ları anahtar kelimesiz kırar** — sütun sayısını (2-12) ve okuma sırasını (permütasyon) aynı quadgram fitness ile brute-force/hill-climbing yaparak bulur
-5. **Entropi analizi ile "gerçek şifreleme mi yoksa çözülebilir encoding mi" ayrımını yapar** — Shannon entropi (örneklem-boyutu düzeltmeli), AES-ECB modu işareti olan 16-byte blok tekrarı tespiti dahil. Yanlış-alfabe decoder denemelerinin sahte "yüksek entropi" alarmı üretmesini engelleyen bir filtre var — sadece hiçbir decoder anlamlı sonuç bulamadıysa gösterilir
-6. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
-7. **Anahtar gerektiren zayıf şifrelemeleri brute-force ile kırar**: XOR (tek-byte ve tekrarlayan anahtar — Hamming distance ile anahtar uzunluğu tahmini), Vigenère ve Beaufort (Index of Coincidence ile), Rail Fence, Affine
-8. **Dosya imzası (magic byte) tespiti** — decode edilen veri aslında bir PNG/ZIP/PDF/ELF/GZIP dosyasıysa bunu anında söyler (CyberChef'in "Detect File Type" özelliğinin offline karşılığı)
-9. **JWT tespiti** — header.payload.signature yapısını tanır, JSON içeriğini decode edip gösterir
-10. Sonuçları **3 katmana kadar zincirleme** dener (Base64 → ROT13 → Hex gibi)
-11. Her sonucu chi-kare harf frekansı + bigram analizi + kelime eşleşmesi + yazdırılabilirlik oranıyla **0-100 arası skorlar**
-12. **Hash/KDF gibi kesin olarak tespit edilen girdilerde anlamsız klasik-şifre kırma denemelerini otomatik atlar** — eskiden bir MD5 hash'i Caesar/Affine ile "kırmaya" çalışıp %40 gibi yanıltıcı skorlu çöp sonuçlar üretiyordu, artık üretmiyor
-13. En yüksek skorlu adayı en üstte gösterir
+5. **Entropi analizi ile "gerçek şifreleme mi yoksa çözülebilir encoding mi" ayrımını yapar** — Shannon entropi (örneklem-boyutu düzeltmeli), AES-ECB modu işareti olan 16-byte blok tekrarı tespiti dahil
+6. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, **uuencode**, **z85 (ZeroMQ)**, Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
+7. **Anahtar gerektiren zayıf şifrelemeleri brute-force ile kırar**: XOR (tek-byte ve tekrarlayan anahtar — artık **quadgram fitness ile doğrulama**, Vigenère/Beaufort ile aynı strateji), Vigenère ve Beaufort (IC + quadgram ile), Rail Fence, Affine
+8. **[YENİ] Crib-dragging (bilinen parça saldırısı)**: `--crib 'flag{'` gibi bilinen bir metin parçası verilirse XOR/Vigenère anahtarını bu ipucundan türetip doğrular — CTF'lerde yaygın, tespiti güçlendiren bir teknik
+9. **Dosya imzası (magic byte) tespiti** — decode edilen veri aslında bir PNG/ZIP/PDF/ELF/GZIP dosyasıysa bunu anında söyler
+10. **JWT tespiti** — header.payload.signature yapısını tanır, JSON içeriğini decode edip gösterir
+11. Sonuçları **3 katmana kadar zincirleme** dener (Base64 → ROT13 → Hex gibi)
+12. Her sonucu chi-kare harf frekansı + bigram analizi + kelime eşleşmesi + yazdırılabilirlik oranıyla **0-100 arası skorlar**
+13. **Hash/KDF gibi kesin olarak tespit edilen girdilerde anlamsız klasik-şifre kırma denemelerini otomatik atlar**
+14. **Geliştirilmiş JSON çıktısı** (`--json`): `hash_candidates` (yapılandırılmış, certain/confidence alanlarıyla), `crib_drag_results` (crib kullanıldıysa) alanları eklendi — scripting/otomasyon için tam makine-okunabilir
+15. En yüksek skorlu adayı en üstte gösterir
 
-CyberChef'in "Magic" özelliğinin terminal/offline, açık kaynak versiyonu gibi düşünebilirsin — üstüne klasik kriptanaliz (XOR/Vigenère/Beaufort kırma) ve hashID tarzı pattern-tabanlı hash tespiti de ekli.
+CyberChef'in "Magic" özelliğinin terminal/offline, açık kaynak versiyonu gibi düşünebilirsin — üstüne klasik kriptanaliz (XOR/Vigenère/Beaufort kırma, crib-dragging) ve hashID tarzı pattern-tabanlı hash tespiti de ekli.
 
 ## Kurulum
 
@@ -51,8 +53,16 @@ identify -n 15 "..."
 # renksiz çıktı (log/pipe için)
 identify --no-color "..." > out.txt
 
-# JSON çıktı (scripting/otomasyon için)
+# JSON çıktı (scripting/otomasyon için) — hash_candidates dahil
 identify --json "..." | jq '.candidates[0]'
+identify --json "$2b$12$..." | jq '.hash_candidates[0]'
+
+# Crib-dragging: XOR/Vigenère'de bilinen parça ipucu ver
+identify --crib 'flag{' "<XOR_sifreli_hex>"
+identify --crib 'the ' "<Vigenere_sifreli_metin>"
+
+# Crib + JSON kombinasyonu
+identify --json --crib 'SECRET' "<veri>" | jq '.crib_drag_results'
 ```
 
 ## Örnek çıktı

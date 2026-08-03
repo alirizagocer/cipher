@@ -3,6 +3,123 @@ import re
 from .hashid import identify_hash, format_hash_report
 
 
+# ---------------------------------------------------------------------------
+# Format imzasi tespiti yardimci fonksiyonlari
+# Hash tespitine benzer mantik: yapisal olarak KESIN taninan formlar.
+# ---------------------------------------------------------------------------
+
+def _detect_pem(s: str):
+    """-----BEGIN ... ----- blogu: sertifika/anahtar PEM formati."""
+    m = re.search(r"-----BEGIN ([A-Z ]+)-----", s)
+    if m:
+        return f"PEM bloğu tespit edildi: '-----BEGIN {m.group(1)}-----' → X.509 sertifika / RSA/EC anahtar / CSR / DH parametresi olabilir. Şifre değil, kriptografik materyal."
+    return None
+
+
+def _detect_iban(s: str):
+    """IBAN: 2 harf ülke kodu + 2 check digit + 11-30 alfanumerik."""
+    # Boşluk ve tireler kaldırılmış formda kontrol
+    clean = re.sub(r"[\s\-]", "", s.strip()).upper()
+    if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{4,30}", clean):
+        return None
+    # Basit IBAN Luhn kontrolü (mod 97): ülke+check sona taşı, A=10..Z=35
+    rearranged = clean[4:] + clean[:4]
+    numeric = ""
+    for c in rearranged:
+        if c.isdigit():
+            numeric += c
+        else:
+            numeric += str(ord(c) - 55)
+    if int(numeric) % 97 == 1:
+        return f"IBAN formatı tespit edildi ({clean[:2]} — ülke kodu, Mod97 doğrulaması ✓) → Uluslararası banka hesap numarası, şifre değil."
+    return None
+
+
+def _detect_luhn_card(s: str):
+    """Kredi kartı: 13-19 rakam, Luhn algoritması doğrulaması."""
+    clean = re.sub(r"[\s\-]", "", s.strip())
+    if not re.fullmatch(r"\d{13,19}", clean):
+        return None
+    # Luhn algoritması
+    total = 0
+    reverse = clean[::-1]
+    for i, d in enumerate(reverse):
+        n = int(d)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    if total % 10 == 0:
+        # Ek: ilk birkaç rakamdan kart tipini tahmin et
+        prefixes = [
+            ("4", "Visa"),
+            ("51", "Mastercard"), ("52", "Mastercard"), ("53", "Mastercard"),
+            ("54", "Mastercard"), ("55", "Mastercard"),
+            ("34", "AmEx"), ("37", "AmEx"),
+            ("6011", "Discover"), ("65", "Discover"),
+            ("35", "JCB"),
+        ]
+        card_type = "bilinmeyen kart"
+        for pfx, name in prefixes:
+            if clean.startswith(pfx):
+                card_type = name
+                break
+        return f"Kredi kartı numarası olabilir (Luhn doğrulaması ✓, {len(clean)} rakam, olası tip: {card_type}) → Kişisel veri, şifre değil."
+    return None
+
+
+def _detect_mac(s: str):
+    """MAC adresi: 6 grup 2 hex, ':' veya '-' ile ayrılmış."""
+    if re.fullmatch(r"([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}", s.strip()):
+        return "MAC adresi formatı → Ağ arayüz kimliği, şifre değil."
+    return None
+
+
+def _detect_ipv6(s: str):
+    """Basit IPv6 tespiti (tam veya kısaltılmış)."""
+    s2 = s.strip()
+    # Çok basit kontrol: ':' içeren ve sadece hex + ':' karakterlerinden oluşan
+    if ":" not in s2:
+        return None
+    if not re.fullmatch(r"[0-9A-Fa-f:]+", s2):
+        return None
+    parts = s2.split(":")
+    if len(parts) < 3 or len(parts) > 8:
+        return None
+    if all(re.fullmatch(r"[0-9A-Fa-f]{0,4}", p) for p in parts):
+        return "IPv6 adresi olabilir → Ağ adresi, şifre değil."
+    return None
+
+
+def _detect_uuencode_header(s: str):
+    """uuencode blok başlığı."""
+    if re.match(r"^begin \d{3} \S+", s.strip(), re.IGNORECASE):
+        return "uuencode bloğu (begin + mod + dosyaadı) → Unix uuencode kodlaması tespit edildi."
+    return None
+
+
+def _detect_pem_fingerprint(s: str):
+    """SHA256 parmak izi formatı (hex gruplar, ':' ile)."""
+    clean = s.strip()
+    if re.fullmatch(r"([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}", clean):
+        return "TLS/X.509 sertifika SHA256 parmak izi formatı (32 grup 2-hex ':' ile) → Sertifika parmak izi, şifre değil."
+    if re.fullmatch(r"([0-9A-Fa-f]{2}:){19}[0-9A-Fa-f]{2}", clean):
+        return "TLS/X.509 sertifika SHA1 parmak izi formatı (20 grup 2-hex ':' ile) → Sertifika parmak izi, şifre değil."
+    return None
+
+
+FORMAT_DETECTORS = [
+    _detect_pem,
+    _detect_iban,
+    _detect_luhn_card,
+    _detect_mac,
+    _detect_ipv6,
+    _detect_uuencode_header,
+    _detect_pem_fingerprint,
+]
+
+
 def analyze_charset(s: str) -> list:
     """Hizli goz gezdirme icin karakter seti / uzunluk gozlemleri dondurur (str liste)."""
     notes = []
@@ -39,6 +156,16 @@ def analyze_charset(s: str) -> list:
 
     if re.fullmatch(r"[ABab\s]+", s2) and len(stripped_ws) % 5 == 0 and len(stripped_ws) > 0:
         notes.append("Sadece A/B harfleri, 5'in katı -> Bacon Cipher adayı")
+
+    # Format imzasi tespiti: PEM, IBAN, kredi karti, MAC, IPv6 vb.
+    # Hash tespitine benzer mantik: yapisal olarak KESIN taninan yapilar.
+    for detector in FORMAT_DETECTORS:
+        try:
+            result = detector(s2)
+            if result:
+                notes.append(result)
+        except Exception:
+            pass
 
     # Hash/KDF tespiti artik ayri bir modulde (hashid.py): yapisal olarak kesin
     # formatlar (bcrypt/argon2/md5crypt/... prefix'leri) tek aday olarak, sadece

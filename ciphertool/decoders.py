@@ -593,6 +593,96 @@ def try_all_rail_fence(s: str, max_rails: int = 8):
     return results
 
 
+# ---------------------------------------------------------------- uuencode
+
+def try_uuencode_bytes(s: str):
+    """Unix uuencode decode. Iki format desteklenir:
+    1) Klasik: 'begin <mode> <filename>' / '...satırlar...' / 'end' blogu
+    2) Satır-bazli: her satir 'M' ile baslayan [32-95] aralik karakterler (header yok)
+       Bu ikinci format bazi CTF/pentest araclari tarafindan ham cikti olarak kullanilir."""
+    import binascii as _bi
+    s2 = s.strip()
+    if not s2:
+        return None
+    # Format 1: tam blok (begin...end)
+    if s2.lower().startswith("begin "):
+        try:
+            lines = s2.splitlines()
+            # 'end' satirini bul
+            end_idx = next((i for i, l in enumerate(lines) if l.strip().lower() == "end"), None)
+            if end_idx is None:
+                return None
+            data_lines = lines[1:end_idx]
+            out = bytearray()
+            for line in data_lines:
+                if not line.strip():
+                    continue
+                decoded = _bi.a2b_uu(line)
+                out.extend(decoded)
+            return bytes(out) if out else None
+        except Exception:
+            return None
+    # Format 2: satır-bazli (header yok), her satir 'M' ile basliyor
+    lines = [l for l in s2.splitlines() if l.strip()]
+    if not lines:
+        return None
+    # Ilk satir 'M' ile baslamali ve sadece printable [32-96] karakterler icermeli
+    if not lines[0].startswith('M'):
+        return None
+    if not all(all(32 <= ord(c) <= 96 for c in l.rstrip()) for l in lines):
+        return None
+    try:
+        import binascii as _bi2
+        out = bytearray()
+        for line in lines:
+            decoded = _bi2.a2b_uu(line)
+            out.extend(decoded)
+        result = bytes(out)
+        return result if result else None
+    except Exception:
+        return None
+
+
+def try_uuencode(s: str):
+    raw = try_uuencode_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+# ---------------------------------------------------------------- z85 (ZeroMQ Base85)
+# RFC standart degil, ama ZeroMQ/CZMQ ve bazi CTF'lerde kullaniliyor.
+# Alfabe: 0-9 A-Z a-z !#$%&()*+-;<=>?@^_`{|}~
+
+_Z85_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
+_Z85_DECODE_MAP = {c: i for i, c in enumerate(_Z85_CHARS)}
+
+
+def try_z85_bytes(s: str):
+    """ZeroMQ z85 decode. 5 karakterlik grup -> 4 byte."""
+    s2 = s.strip()
+    if not s2 or len(s2) % 5 != 0:
+        return None
+    if not all(c in _Z85_DECODE_MAP for c in s2):
+        return None
+    try:
+        out = bytearray()
+        for i in range(0, len(s2), 5):
+            chunk = s2[i:i+5]
+            val = 0
+            for c in chunk:
+                val = val * 85 + _Z85_DECODE_MAP[c]
+            if val > 0xFFFFFFFF:
+                return None
+            out.extend(val.to_bytes(4, 'big'))
+        return bytes(out)
+    except Exception:
+        return None
+
+
+def try_z85(s: str):
+    raw = try_z85_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
 # ---------------------------------------------------------------- Kayit defteri
 
 BYTES_DECODERS = [
@@ -604,6 +694,8 @@ BYTES_DECODERS = [
     ("Base91", try_base91_bytes),
     ("Base45", try_base45_bytes),
     ("Base36", try_base36_bytes),
+    ("uuencode", try_uuencode_bytes),
+    ("z85 (ZeroMQ)", try_z85_bytes),
 ]
 
 SINGLE_SHOT_DECODERS = [
@@ -615,6 +707,8 @@ SINGLE_SHOT_DECODERS = [
     ("Base91", try_base91, "encoding"),
     ("Base45", try_base45, "encoding"),
     ("Base36", try_base36, "encoding"),
+    ("uuencode", try_uuencode, "encoding"),
+    ("z85 (ZeroMQ)", try_z85, "encoding"),
     ("Hex (Base16)", try_hex, "encoding"),
     ("Binary (8-bit)", try_binary, "encoding"),
     ("Octal", try_octal, "encoding"),

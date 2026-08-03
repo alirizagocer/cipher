@@ -6,6 +6,7 @@ import html
 from . import __version__
 from .charset import analyze_charset
 from .engine import explore
+from .hashid import identify_hash
 
 
 RESET = "\033[0m"
@@ -46,6 +47,15 @@ def main():
     parser.add_argument("--full", action="store_true", help="Decode edilmiş metni kısaltmadan tam göster")
     parser.add_argument("--json", action="store_true", help="Sonuçları JSON olarak yazdır (scripting için)")
     parser.add_argument("--html", action="store_true", help="Sonuçları HTML formatında yazdırır.")
+    parser.add_argument(
+        "--crib",
+        metavar="METIN",
+        help=(
+            "Crib-dragging saldırısı için bilinen parça. Girdi XOR/Vigenère ile "
+            "şifreliyse ve içinde bu parçanın geçtiğini biliyorsan anahtarı "
+            "buradan türetmeyi dener. Örnek: --crib 'flag{'"
+        ),
+    )
     args = parser.parse_args()
 
     if args.file:
@@ -68,14 +78,71 @@ def main():
     charset_notes = analyze_charset(raw)
     candidates = explore(raw, max_depth=args.depth, top_n=args.top)
 
+    # Hash tespitini ayrı yapılandırılmış formda al (JSON şeması için)
+    hash_candidates_raw = identify_hash(raw.strip())
+
+    # Crib-dragging (varsa)
+    crib_results = []
+    if args.crib:
+        crib = args.crib
+        import binascii as _bi
+        from .engine import _bytes_from_text_guess
+        from .cribdrag import xor_crib_drag, vigenere_crib_drag
+
+        # XOR crib drag
+        data = _bytes_from_text_guess(raw)
+        if data:
+            try:
+                xor_hits = xor_crib_drag(data, crib.encode("utf-8", errors="replace"), top_n=3)
+                for pos, key, pt, fitness in xor_hits:
+                    try:
+                        key_display = key.decode("ascii") if key.isascii() else key.hex()
+                    except Exception:
+                        key_display = key.hex()
+                    crib_results.append({
+                        "type": "XOR",
+                        "crib_position": pos,
+                        "key_guess": key_display,
+                        "plaintext": pt,
+                        "fitness": round(fitness, 2),
+                    })
+            except Exception:
+                pass
+
+        # Vigenère crib drag
+        try:
+            vig_hits = vigenere_crib_drag(raw, crib, top_n=3)
+            for pos, key, pt, fitness in vig_hits:
+                crib_results.append({
+                    "type": "Vigenère",
+                    "crib_position_alpha": pos,
+                    "key_guess": key,
+                    "plaintext": pt,
+                    "fitness": round(fitness, 2),
+                })
+        except Exception:
+            pass
+
     if args.json:
         payload = {
             "charset_notes": charset_notes,
+            "hash_candidates": [
+                {
+                    "name": c.name,
+                    "confidence": c.confidence,
+                    "certain": c.certain,
+                    "note": c.note,
+                    "example_context": c.example_context,
+                }
+                for c in hash_candidates_raw
+            ],
             "candidates": [
                 {"rank": i + 1, "chain": c.chain, "text": c.text, "score": c.score, "kind": c.kind}
                 for i, c in enumerate(candidates)
             ],
         }
+        if crib_results:
+            payload["crib_drag_results"] = crib_results
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
@@ -106,6 +173,20 @@ def main():
     print(color("=== Karakter Seti Analizi ===", BOLD + CYAN, use_color))
     for note in charset_notes:
         print(f"  - {note}")
+
+    # Crib-dragging sonuçları (varsa)
+    if crib_results:
+        print()
+        print(color(f"=== Crib-Dragging Sonuçları (crib: '{args.crib}') ===", BOLD + MAGENTA, use_color))
+        for i, r in enumerate(crib_results, 1):
+            cipher_type = r["type"]
+            key = r.get("key_guess", "?")
+            fit = r.get("fitness", 0)
+            pos = r.get("crib_position") or r.get("crib_position_alpha", "?")
+            pt = r.get("plaintext", "")
+            print(f"  #{i} [{cipher_type}] pozisyon={pos}  anahtar-tahmini={key!r}  fitness={fit:.1f}")
+            print(f"       {truncate(pt, 120)}")
+        print()
 
     print()
     print(color("=== Otomatik Decode Denemeleri (skora göre sıralı) ===", BOLD + CYAN, use_color))
@@ -139,7 +220,8 @@ def main():
     print(color("İpucu: en yüksek skorlu satır çoğunlukla doğru çözümdür. "
                  "Skor 35'in altındaysa muhtemelen yanlış yoldasın ya da veri gerçek "
                  "şifreleme (AES/RSA/XOR w/ key) ile korunuyor. --json ile scripting için "
-                 "makine-okunabilir çıktı alabilirsin.", DIM, use_color))
+                 "makine-okunabilir çıktı alabilirsin. --crib 'bilinen_metin' ile "
+                 "crib-dragging saldırısı deneyebilirsin.", DIM, use_color))
 
 
 if __name__ == "__main__":

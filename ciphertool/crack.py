@@ -92,10 +92,17 @@ def _column_best_byte(column: bytes) -> int:
 
 
 def crack_repeating_xor(data: bytes, max_keysize: int = 40):
-    """(key:bytes, plaintext:str, score:float) dondurur, olmazsa None."""
+    """(key:bytes, plaintext:str, score:float) dondurur, olmazsa None.
+
+    Vigenere/Beaufort ile ayni strateji: tek Hamming-distance tahminine korukorune
+    guvenilmez. Top-k anahtar uzunlugu adayinin hepsi denenir, hangisinin gercekten
+    okunabilir metin urettigini quadgram fitness ile secilir. Bu, yanlis keysize
+    tahmini olan durumlarda yanlis sonuc uretmeyi onler."""
+    from .ngram import quadgram_fitness
+
     if len(data) < 8:
         return None
-    best_overall = None
+    best_overall = None  # (fitness, key_bytes, plaintext, score)
     for ks in guess_xor_keysize(data, max_keysize=max_keysize):
         key = bytearray()
         for col in range(ks):
@@ -103,10 +110,14 @@ def crack_repeating_xor(data: bytes, max_keysize: int = 40):
             key.append(_column_best_byte(column))
         pt = bytes(b ^ key[i % ks] for i, b in enumerate(data))
         text = pt.decode("utf-8", errors="replace")
+        fit = quadgram_fitness(text)
         sc = score_text(text)
-        if best_overall is None or sc > best_overall[2]:
-            best_overall = (bytes(key), text, sc)
-    return best_overall
+        if best_overall is None or fit > best_overall[0]:
+            best_overall = (fit, bytes(key), text, sc)
+    if best_overall is None:
+        return None
+    _, key_bytes, text, sc = best_overall
+    return key_bytes, text, sc
 
 
 # ---------------------------------------------------------------- Vigenere
