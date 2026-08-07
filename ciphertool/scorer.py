@@ -16,15 +16,26 @@ ENGLISH_FREQ = {
 
 # Kucuk bir ortak kelime seti (Ingilizce + Turkce) - hizli kontrol icin
 COMMON_WORDS = {
+    # English
     "the", "and", "you", "that", "was", "for", "are", "with", "this",
     "have", "from", "not", "but", "what", "all", "were", "when", "your",
     "can", "said", "there", "use", "each", "which", "she", "how", "will",
     "flag", "password", "user", "admin", "secret", "key", "token", "true",
     "false", "http", "https", "www", "com", "hello", "world", "test",
+    # Turkish
     "ve", "bir", "bu", "için", "ile", "olan", "olarak", "değil", "gibi",
     "daha", "çok", "her", "ben", "sen", "biz", "şu", "ama", "de", "da",
     "mi", "mı", "ki", "ise", "kadar", "sonra", "önce", "merhaba", "dünya",
     "parola", "şifre", "kullanıcı", "yönetici",
+    # German (Almanca)
+    "der", "die", "und", "den", "von", "das", "mit", "sich", "des", "auf",
+    "für", "ist", "im", "dem", "nicht", "ein", "eine", "als", "auch", "es",
+    # Spanish (İspanyolca)
+    "el", "la", "de", "que", "en", "un", "ser", "se", "no", "haber", "por",
+    "con", "su", "para", "como", "estar", "tener", "le", "lo", "todo", "pero",
+    # French (Fransızca)
+    "le", "la", "de", "et", "un", "les", "que", "qui", "en", "dans", "pour",
+    "par", "sur", "pas", "est", "des", "une", "plus", "avec", "il", "sont",
 }
 
 # En sik gorulen Ingilizce bigram'lar (yaklasik goreceli agirlik).
@@ -148,6 +159,15 @@ def score_text(s: str) -> float:
     printable_score = pr * 15.0
 
     total = chi_score + bg_score + word_score + space_score + printable_score
+
+    # KATI FALSE-POSITIVE FILTRESI (Kisa metinler icin):
+    # Eger metin 15 karakterden kisaysa ve icinde hic gercek kelime eslesmediyse
+    # bu muhtemelen rastgele bir string'tir, tesadufi chi/bigram puanlari ciddiye alinmamalidir.
+    if len(s) < 15 and word_score == 0.0:
+        total *= 0.2  # Cok sert ceza
+
+    if total > 50.0 and word_score == 0.0 and bg_score < 5.0 and len(letters) < 15:
+        total = 35.0
 
     # Yapısal veri bonusu: JSON, XML, URL, email decode edilmisse cok guclu sinyal
     struct_bonus = _structural_bonus(s)

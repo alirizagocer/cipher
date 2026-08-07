@@ -51,6 +51,53 @@ def try_base64_urlsafe(s: str):
     return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
+# ---------------------------------------------------------------- Custom Base64 Alfabeleri
+STD_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+BCRYPT_B64 = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+CRYPT_B64 = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+IMAP_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,"
+XXENCODE_B64 = "+-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+def _custom_base64_decode(s: str, alphabet: str):
+    s2 = s.strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    if not s2 or len(s2) < 4:
+        return None
+    valid_chars = set(alphabet) | {"="}
+    if not all(c in valid_chars for c in s2):
+        return None
+    trans = str.maketrans(alphabet, STD_B64)
+    s2_std = s2.translate(trans)
+    pad = (-len(s2_std)) % 4
+    try:
+        return base64.b64decode(s2_std + "=" * pad, validate=False)
+    except Exception:
+        return None
+
+
+def try_base64_bcrypt_bytes(s: str):
+    return _custom_base64_decode(s, BCRYPT_B64)
+
+def try_base64_bcrypt(s: str):
+    raw = try_base64_bcrypt_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+def try_base64_crypt_bytes(s: str):
+    return _custom_base64_decode(s, CRYPT_B64)
+
+def try_base64_crypt(s: str):
+    raw = try_base64_crypt_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+def try_xxencode_bytes(s: str):
+    return _custom_base64_decode(s, XXENCODE_B64)
+
+def try_xxencode(s: str):
+    raw = try_xxencode_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
 def try_base32_bytes(s: str):
     s2 = s.strip().replace("\n", "").replace(" ", "").upper()
     if not s2 or len(s2) < 8 or not re.fullmatch(r"[A-Z2-7=]+", s2):
@@ -1239,6 +1286,9 @@ def try_baudot(s: str):
 BYTES_DECODERS = [
     ("Base64", try_base64_bytes),
     ("Base64 (URL-safe)", try_base64_urlsafe_bytes),
+    ("Base64 (Bcrypt)", try_base64_bcrypt_bytes),
+    ("Base64 (Crypt)", try_base64_crypt_bytes),
+    ("XXencode", try_xxencode_bytes),
     ("Base32", try_base32_bytes),
     ("Base32 Crockford", try_base32_crockford_bytes),
     ("Base85/Ascii85", try_base85_bytes),
@@ -1258,6 +1308,9 @@ BYTES_DECODERS = [
 SINGLE_SHOT_DECODERS = [
     ("Base64", try_base64, "encoding"),
     ("Base64 (URL-safe)", try_base64_urlsafe, "encoding"),
+    ("Base64 (Bcrypt)", try_base64_bcrypt, "encoding"),
+    ("Base64 (Crypt)", try_base64_crypt, "encoding"),
+    ("XXencode", try_xxencode, "encoding"),
     ("Base32", try_base32, "encoding"),
     ("Base32 Crockford", try_base32_crockford, "encoding"),
     ("Base85/Ascii85", try_base85, "encoding"),
