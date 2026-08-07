@@ -149,15 +149,19 @@ def score_text(s: str) -> float:
 
     total = chi_score + bg_score + word_score + space_score + printable_score
 
+    # Yapısal veri bonusu: JSON, XML, URL, email decode edilmisse cok guclu sinyal
+    struct_bonus = _structural_bonus(s)
+    total += struct_bonus
+
     # Gurultu tavani: az harf var (hex/hash gibi kisa alfa oranli girdi), gercek
     # kelime eslesmesi yok ve bigram sinyali zayifsa -> bu buyuk ihtimalle
     # rastgele/anlamsiz cikti, chi-kare'nin sans eseri dusuk gelmesine ragmen
     # skoru 20'nin ustune cikarma.
-    if word_score == 0 and bg_score < 8:
+    if word_score == 0 and bg_score < 8 and struct_bonus == 0:
         total = min(total, 18.0)
     # Cok az harf (n<10) uzerinden hesaplanan chi-kare/bigram istatistiksel
     # olarak guvenilmez - kelime eslesmesi yoksa ek tavan uygula.
-    if n_letters < 10 and word_score == 0:
+    if n_letters < 10 and word_score == 0 and struct_bonus == 0:
         total = min(total, 15.0)
 
     return round(min(total, 100.0), 2)
@@ -173,3 +177,48 @@ def looks_like_binary_blob(raw_bytes: bytes) -> bool:
     n = len(raw_bytes)
     entropy = -sum((c / n) * math.log2(c / n) for c in counts.values())
     return entropy > 7.2  # 8'e yakin = neredeyse tam rastgele
+
+
+# ---------------------------------------------------------------------------
+# Yapısal veri tanıma — bunlar decode başarısını kuvvetle gösterir
+# ---------------------------------------------------------------------------
+
+def _structural_bonus(s: str) -> float:
+    """JSON, XML, URL, email gibi yapisal formatlari taniyan bonus puanlayici.
+    Bu veri tipleri decode edildiginde anlamli sonuc uretildiginin guclu kaniti.
+    Maksimum +30 puan dondurur."""
+    bonus = 0.0
+
+    stripped = s.strip()
+
+    # JSON object veya array
+    if (stripped.startswith("{") and stripped.endswith("}")) or \
+       (stripped.startswith("[") and stripped.endswith("]")):
+        try:
+            import json as _json
+            _json.loads(stripped)
+            bonus += 28.0  # gecerli JSON - cok gucu bir sinyal
+        except Exception:
+            # Gecerli JSON degil ama JSON-gibi goruntu
+            if re.search(r'"[^"]+"\s*:', stripped):
+                bonus += 12.0
+    # XML/HTML
+    elif re.search(r"<[a-zA-Z][a-zA-Z0-9]*[\s>]", stripped) and "</" in stripped:
+        bonus += 20.0
+
+    # URL'ler
+    url_count = len(re.findall(r"https?://[^\s\"'<>]+", stripped))
+    if url_count >= 1:
+        bonus += min(url_count * 8.0, 20.0)
+
+    # Email adresleri
+    email_count = len(re.findall(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", stripped))
+    if email_count >= 1:
+        bonus += min(email_count * 6.0, 15.0)
+
+    # Base path / dosya yolu (Linux/Windows)
+    if re.search(r"(/[a-zA-Z0-9_\-./]+){2,}", stripped) or \
+       re.search(r"[A-Za-z]:\\[\\a-zA-Z0-9_\-. ]+", stripped):
+        bonus += 8.0
+
+    return min(bonus, 30.0)

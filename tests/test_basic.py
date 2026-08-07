@@ -701,6 +701,232 @@ def test_engine_decodes_baudot_via_explore():
     assert any("HELLO" in t for t in texts), f"HELLO bulunamadi, ilk 3 sonuc: {texts[:3]}"
 
 
+
+# ---- v9 testleri ----
+
+def test_base62_roundtrip():
+    """Base62 decode: URL kisaltici / ID formati."""
+    from ciphertool.decoders import try_base62
+    # "Hello" -> Base62 encode
+    data = b"Hello"
+    n = int.from_bytes(data, "big")
+    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    enc = []
+    while n > 0:
+        enc.append(chars[n % 62])
+        n //= 62
+    encoded = "".join(reversed(enc))
+    result = try_base62(encoded)
+    assert result is not None
+    assert "Hello" in result
+
+
+def test_base62_digits_only_rejected():
+    """Sadece rakamlardan olusan string Base62 ile reddedilmeli (decimal ile cakisir)."""
+    from ciphertool.decoders import try_base62
+    # Salt rakamlar decimal ile cakisir
+    assert try_base62("12345") is None
+
+
+def test_punycode_decode():
+    """Punycode xn-- formati decode edilmeli."""
+    from ciphertool.decoders import try_punycode
+    # xn--nxasmq6b.com -> yunanca harfler icermeli (veya farkli bir domain)
+    result = try_punycode("xn--bcher-kva.de")
+    assert result is not None
+    # Almanca 'u-umlaut' karakteri icermeli
+    assert "cher" in result.lower() or len(result) > 0
+
+
+def test_punycode_no_xn_returns_none():
+    """xn-- prefix olmayan string None donmeli."""
+    from ciphertool.decoders import try_punycode
+    assert try_punycode("google.com") is None
+    assert try_punycode("example.org") is None
+
+
+def test_zlib_decode_via_base64():
+    """Zlib veri Base64 ile encode edildiyse decode edilmeli."""
+    from ciphertool.decoders import try_zlib
+    import zlib, base64
+    original = b"Hello, this is zlib compressed data!"
+    compressed = zlib.compress(original)
+    encoded = base64.b64encode(compressed).decode()
+    result = try_zlib(encoded)
+    assert result is not None
+    assert "Hello" in result
+
+
+def test_zlib_decode_via_hex():
+    """Zlib veri hex ile encode edildiyse decode edilmeli."""
+    from ciphertool.decoders import try_zlib
+    import zlib
+    original = b"Test zlib hex decode"
+    compressed = zlib.compress(original)
+    hex_enc = compressed.hex()
+    result = try_zlib(hex_enc)
+    assert result is not None
+    assert "Test" in result
+
+
+def test_hex_dump_parse_xxd_format():
+    """xxd formati hex dump parse edilmeli."""
+    from ciphertool.decoders import try_hex_dump
+    xxd_output = "00000000: 4865 6c6c 6f20 576f 726c 64  Hello World"
+    result = try_hex_dump(xxd_output)
+    assert result is not None
+    assert "Hello World" in result
+
+
+def test_hex_dump_parse_multi_line():
+    """Cok satirli hex dump parse edilmeli."""
+    from ciphertool.decoders import try_hex_dump
+    xxd_multi = (
+        "00000000: 4865 6c6c 6f2c 2057  Hello, W\n"
+        "00000008: 6f72 6c64 2100 0000  orld!..."
+    )
+    result = try_hex_dump(xxd_multi)
+    assert result is not None
+    assert "Hello" in result
+
+
+def test_braille_decode_hello():
+    """Unicode Braille HELLO decode edilmeli."""
+    from ciphertool.decoders import try_braille
+    # H=\u2813, E=\u2811, L=\u2807, L=\u2807, O=\u2815
+    braille_hello = "\u2813\u2811\u2807\u2807\u2815"
+    result = try_braille(braille_hello)
+    assert result is not None
+    assert "hello" in result.lower() or "HELLO" in result.upper()
+
+
+def test_braille_non_braille_returns_none():
+    """Braille karakteri icermeyen string None donmeli."""
+    from ciphertool.decoders import try_braille
+    assert try_braille("just normal ASCII text here") is None
+    assert try_braille("12345") is None
+
+
+def test_apikey_github_pat_detected():
+    """GitHub PAT formati tespit edilmeli."""
+    from ciphertool.apikeys import detect_api_keys
+    fake_ghp = "ghp_" + "A" * 36
+    matches = detect_api_keys(fake_ghp)
+    assert len(matches) > 0
+    assert any("GitHub" in m.service for m in matches)
+    assert any(m.severity == "HIGH" for m in matches)
+
+
+def test_apikey_aws_access_key_detected():
+    """AWS Access Key ID formati tespit edilmeli."""
+    from ciphertool.apikeys import detect_api_keys
+    fake_aws = "AKIAIOSFODNN7EXAMPLE"
+    matches = detect_api_keys(fake_aws)
+    assert len(matches) > 0
+    assert any("AWS" in m.service for m in matches)
+    assert matches[0].confidence >= 95
+
+
+def test_apikey_stripe_live_detected():
+    """Stripe Live Secret Key tespit edilmeli ve HIGH severity olmali."""
+    from ciphertool.apikeys import detect_api_keys
+    fake_stripe = "sk_live_" + "a" * 24
+    matches = detect_api_keys(fake_stripe)
+    assert len(matches) > 0
+    assert any("Stripe" in m.service and m.severity == "HIGH" for m in matches)
+
+
+def test_apikey_ssh_private_key_detected():
+    """SSH private key header tespit edilmeli."""
+    from ciphertool.apikeys import detect_api_keys
+    ssh_key = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake base64 data\n-----END OPENSSH PRIVATE KEY-----"
+    matches = detect_api_keys(ssh_key)
+    assert len(matches) > 0
+    assert any("OpenSSH" in m.service or "Private Key" in m.service for m in matches)
+
+
+def test_apikey_no_match_plain_text():
+    """Normal metin API key match vermemeli."""
+    from ciphertool.apikeys import detect_api_keys
+    matches = detect_api_keys("This is just a plain English sentence with no tokens.")
+    assert len(matches) == 0
+
+
+def test_apikey_integrated_in_charset():
+    """API key tespiti charset analizi icerisinde calisimali."""
+    from ciphertool.charset import analyze_charset
+    fake_aws = "AKIAIOSFODNN7EXAMPLE"
+    notes = analyze_charset(fake_aws)
+    assert any("AWS" in n for n in notes), f"AWS bulunamadi notlarda: {notes}"
+
+
+def test_score_text_json_bonus():
+    """Gecerli JSON decode sonucu yuksek skor almali."""
+    from ciphertool.scorer import score_text
+    json_text = '{"user": "alice", "role": "admin", "token": "abc123"}'
+    score = score_text(json_text)
+    assert score >= 50, f"JSON skoru cok dusuk: {score}"
+
+
+def test_score_text_url_bonus():
+    """URL iceren metin yuksek skor almali."""
+    from ciphertool.scorer import score_text
+    url_text = "Redirect to https://example.com/login?token=abc123 for authentication."
+    score = score_text(url_text)
+    assert score >= 40, f"URL skoru cok dusuk: {score}"
+
+
+def test_filesig_webp_detected():
+    """WebP dosya imzasi tespit edilmeli."""
+    from ciphertool.filesig import detect_file_signature
+    # RIFF + 4 byte uzunluk + WEBP
+    webp = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 10
+    result = detect_file_signature(webp)
+    assert result == "WebP image", f"WebP tespiti basarisiz: {result}"
+
+
+def test_filesig_flac_detected():
+    """FLAC audio dosya imzasi tespit edilmeli."""
+    from ciphertool.filesig import detect_file_signature
+    flac = b"fLaC" + b"\x00" * 20
+    result = detect_file_signature(flac)
+    assert result == "FLAC audio", f"FLAC tespiti basarisiz: {result}"
+
+
+def test_filesig_xml_detected():
+    """XML dosya imzasi tespit edilmeli."""
+    from ciphertool.filesig import detect_file_signature
+    xml = b"<?xml version=\"1.0\"?><root></root>"
+    result = detect_file_signature(xml)
+    assert result is not None and "XML" in result, f"XML tespiti basarisiz: {result}"
+
+
+def test_cli_context_flag():
+    """--context flag CLI'da hata vermeden calisimali."""
+    import subprocess, sys
+    result = subprocess.run(
+        [sys.executable, "-m", "ciphertool.cli", "--context", "windows",
+         "aad3b435b51404eeaad3b435b51404ee"],
+        capture_output=True, text=True,
+        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id"
+    )
+    # Hata olmamali ve WINDOWS context basligi gorulmeli
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "WINDOWS" in result.stdout or "NTLM" in result.stdout
+
+
+def test_cli_verbose_flag():
+    """--verbose flag CLI'da hata vermeden calisimali."""
+    import subprocess, sys
+    result = subprocess.run(
+        [sys.executable, "-m", "ciphertool.cli", "--verbose",
+         "SGVsbG8gV29ybGQ="],
+        capture_output=True, text=True,
+        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id"
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     failed = 0

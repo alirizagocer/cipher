@@ -683,6 +683,288 @@ def try_z85(s: str):
     return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
+# ---------------------------------------------------------------- Base62
+# URL kisalticilarda (bit.ly, t.co), UUID alternatiflerinde, API token'larda yaygin.
+# Alfabe: 0-9 (10) + A-Z (26) + a-z (26) = 62 karakter.
+# Base58'den farki: 0, O, I, l karakterlerini DE icerir.
+
+_BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_BASE62_SET = set(_BASE62_CHARS)
+_BASE62_MAP = {c: i for i, c in enumerate(_BASE62_CHARS)}
+
+
+def try_base62_bytes(s: str):
+    """Base62 -> bytes. Tum karakterler Base62 alfabesinde olmali (min 2 karakter)."""
+    s2 = s.strip()
+    if len(s2) < 2:
+        return None
+    if not all(c in _BASE62_SET for c in s2):
+        return None
+    # Salt rakam string'leri decimal ile cakisir, redet
+    if s2.isdigit():
+        return None
+    n = 0
+    for c in s2:
+        n = n * 62 + _BASE62_MAP[c]
+    if n == 0:
+        return b"\x00"
+    result = []
+    while n > 0:
+        result.append(n & 0xFF)
+        n >>= 8
+    return bytes(reversed(result))
+
+
+def try_base62(s: str):
+    raw = try_base62_bytes(s)
+    if raw is None:
+        return None
+    try:
+        decoded = raw.decode("utf-8")
+        return decoded if decoded.isprintable() or "\n" in decoded else None
+    except UnicodeDecodeError:
+        return None
+
+
+# ---------------------------------------------------------------- Punycode (ACE / IDNA)
+# Uluslararasi domain adlarini ASCII'ye donusturur.
+# Phishing tespitinde, SOC analizinde kritik: xn-- prefix'li alan adlari
+# goze normal gorunen fakat farkli Unicode karakterler kullanan sahte siteler olabilir.
+# Ornek: xn--e1afmapc.xn--p1ai -> kinixud.ru gibi gorunebilir
+
+def try_punycode(s: str):
+    """Punycode decode. xn-- prefix icermeli. Hicbir degisiklik olmadiysa None doner."""
+    s2 = s.strip()
+    if not s2 or "xn--" not in s2.lower():
+        return None
+    try:
+        parts = s2.split(".")
+        decoded_parts = []
+        changed = False
+        for part in parts:
+            if part.lower().startswith("xn--"):
+                try:
+                    decoded = part[4:].encode("ascii").decode("punycode")
+                    decoded_parts.append(decoded)
+                    changed = True
+                except Exception:
+                    decoded_parts.append(part)
+            else:
+                decoded_parts.append(part)
+        if not changed:
+            return None
+        result = ".".join(decoded_parts)
+        return result if result != s2 else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- Zlib / Deflate
+# Web protokollerinde (HTTP Content-Encoding), PNG/zip icinde, CTF'lerde yaygin.
+# Raw zlib: zlib.decompress() ile. Raw deflate: wbits=-15.
+
+def try_zlib_bytes(s: str):
+    """Zlib-compressed veriyi (base64/hex ile encode edilmis olmali) decompress eder.
+    Once ham string'i bytes'a cevirmek icin hex veya base64 decode dener."""
+    import zlib
+    s2 = s.strip()
+    if not s2:
+        return None
+    # Hex decode dene
+    try:
+        stripped_ws = re.sub(r"\s", "", s2)
+        if re.fullmatch(r"[0-9A-Fa-f]+", stripped_ws) and len(stripped_ws) % 2 == 0:
+            raw = bytes.fromhex(stripped_ws)
+            try:
+                return zlib.decompress(raw)
+            except zlib.error:
+                try:
+                    return zlib.decompress(raw, -15)  # raw deflate
+                except zlib.error:
+                    pass
+    except Exception:
+        pass
+    # Base64 decode dene
+    try:
+        import base64 as _b64
+        raw = _b64.b64decode(s2, validate=False)
+        if len(raw) >= 4:
+            try:
+                return zlib.decompress(raw)
+            except zlib.error:
+                try:
+                    return zlib.decompress(raw, -15)  # raw deflate
+                except zlib.error:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+def try_zlib(s: str):
+    raw = try_zlib_bytes(s)
+    if raw is None:
+        return None
+    try:
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- Hex Dump (xxd / hexdump formati)
+# xxd, od, hexdump araclari bu formatla cikti uretir.
+# Format: "00000000: 4865 6c6c 6f20 576f 726c 64  Hello World"
+# Sadece hex kismi alinir, ASCII kismi atlanir.
+
+def _parse_hex_dump_line(line: str):
+    """Tek bir xxd satiri: offset:? + hex gruplar + ascii kisim -> bytes veya None."""
+    line = line.strip()
+    if not line:
+        return None
+    # Offset kismi varsa kaldir (sayilar + ":" veya boşluk + devam)
+    # Olası formatlar: "00000000: 4865 6c6c" veya "0000000 110 145 154" (octal - od)
+    if ":" in line:
+        line = line.split(":", 1)[1]
+    # ASCII kismi kaldir: son bosluk grubundan sonra gelen yazdirilabiir karakterler
+    # Heuristic: son iki bosluktan sonra gelen alfanumerik blogu at
+    hex_part = re.split(r"  +", line)[0].strip()
+    # Hex karakterlerini topla
+    hex_chars = re.sub(r"[^0-9A-Fa-f]", "", hex_part)
+    if not hex_chars or len(hex_chars) % 2 != 0:
+        return None
+    try:
+        return bytes.fromhex(hex_chars)
+    except Exception:
+        return None
+
+
+def try_hex_dump_bytes(s: str):
+    """xxd / hexdump / od ciktisini ham byte'lara cevirir."""
+    lines = s.strip().splitlines()
+    if len(lines) < 1:
+        return None
+    # Formatı kontrol et: en az bir satir xxd/hexdump gibi görünmeli
+    # En az 2 satir veya tek satir ama offset + hex yapısı var
+    valid_lines = []
+    for line in lines:
+        if not line.strip():
+            continue
+        # xxd formatı: "XXXXXXXX: XX XX XX..."
+        if re.match(r"^[0-9a-fA-F]+:\s+[0-9a-fA-F ]+", line.strip()):
+            valid_lines.append(line)
+        # hexdump -C formatı: "00000000  48 65 6c 6c 6f  |Hello|"
+        elif re.match(r"^[0-9a-fA-F]+\s+[0-9a-fA-F]{2}\s+", line.strip()):
+            valid_lines.append(line)
+    if len(valid_lines) < 1:
+        return None
+    result = bytearray()
+    for line in valid_lines:
+        chunk = _parse_hex_dump_line(line)
+        if chunk:
+            result.extend(chunk)
+    return bytes(result) if result else None
+
+
+def try_hex_dump(s: str):
+    raw = try_hex_dump_bytes(s)
+    if raw is None:
+        return None
+    try:
+        decoded = raw.decode("utf-8", errors="replace")
+        # Anlamsiz veri degilse dondur
+        printable = sum(1 for c in decoded if c.isprintable() or c in "\n\r\t")
+        if len(decoded) == 0 or printable / len(decoded) < 0.70:
+            return None
+        return decoded
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- Braille Unicode
+# 6-nokta Braille: U+2800-U+283F arasi Unicode karakterler.
+# 8-nokta genisletilmis Braille: U+2800-U+28FF.
+# CTF'lerde ve erisebilirlik arastirmalarinda karsilasilan encoding.
+
+# Grade 1 Braille -> ASCII haritalama (ITA/Amerikan standardi)
+_BRAILLE_TO_CHAR = {
+    "\u2800": " ",  # bos (bosluk)
+    "\u2801": "a",
+    "\u2803": "b",
+    "\u2809": "c",
+    "\u2819": "d",
+    "\u2811": "e",
+    "\u280b": "f",
+    "\u281b": "g",
+    "\u2813": "h",
+    "\u280a": "i",
+    "\u281a": "j",
+    "\u2805": "k",
+    "\u2807": "l",
+    "\u280d": "m",
+    "\u281d": "n",
+    "\u2815": "o",
+    "\u280f": "p",
+    "\u281f": "q",
+    "\u2817": "r",
+    "\u280e": "s",
+    "\u281e": "t",
+    "\u2825": "u",
+    "\u2827": "v",
+    "\u283a": "w",
+    "\u282d": "x",
+    "\u283d": "y",
+    "\u2835": "z",
+    "\u2830": "0",
+    "\u2802": "1",
+    "\u2806": "2",
+    "\u2812": "3",
+    "\u2832": "4",
+    "\u2822": "5",
+    "\u2816": "6",
+    "\u2836": "7",
+    "\u2826": "8",
+    "\u2834": "9",
+    "\u2820": "",  # number indicator (sayı başlatıcı, atlanır)
+    "\u2840": "",  # capital indicator (büyük harf başlatıcı, atlanır)
+    "\u2804": ",",
+    "\u2814": ";",
+    "\u2828": ":",
+    "\u2832": "!",  # override edilebilir
+    "\u2818": ".",
+    "\u2838": "?",
+    "\u2824": "-",
+    "\u2810": "\"",
+    "\u2823": "(",
+    "\u281c": ")",
+}
+
+_BRAILLE_RANGE = ("\u2800", "\u28ff")
+
+
+def try_braille(s: str):
+    """Unicode Braille karakterlerini ASCII metne decode eder.
+    Girdinin en az %50'si Braille karakteri olmali."""
+    s2 = s.strip()
+    if not s2:
+        return None
+    braille_chars = [c for c in s2 if "\u2800" <= c <= "\u28ff"]
+    if len(braille_chars) < 3:
+        return None
+    if len(braille_chars) / len(s2) < 0.50:
+        return None  # kotu oran, gercek Braille degil
+    result = []
+    for c in s2:
+        if "\u2800" <= c <= "\u28ff":
+            mapped = _BRAILLE_TO_CHAR.get(c, "?")
+            result.append(mapped)
+        elif c in (" ", "\n", "\t"):
+            result.append(c)
+        # diger karakterleri atla
+    decoded = "".join(result).strip()
+    if not decoded or all(c in "? " for c in decoded):
+        return None
+    return decoded
+
 # ---------------------------------------------------------------- yEnc (Usenet binary encoding)
 # Newsgroup'larda binary dosyalari text olarak dagitmak icin kullanilir.
 # Format: her byte'a 42 eklenir (mod 256); "=" escape karakteri sonrasinda
@@ -846,9 +1128,12 @@ BYTES_DECODERS = [
     ("Base91", try_base91_bytes),
     ("Base45", try_base45_bytes),
     ("Base36", try_base36_bytes),
+    ("Base62", try_base62_bytes),
     ("uuencode", try_uuencode_bytes),
     ("z85 (ZeroMQ)", try_z85_bytes),
     ("yEnc", try_yenc_bytes),
+    ("Zlib/Deflate", try_zlib_bytes),
+    ("Hex Dump (xxd/hexdump)", try_hex_dump_bytes),
 ]
 
 SINGLE_SHOT_DECODERS = [
@@ -860,10 +1145,15 @@ SINGLE_SHOT_DECODERS = [
     ("Base91", try_base91, "encoding"),
     ("Base45", try_base45, "encoding"),
     ("Base36", try_base36, "encoding"),
+    ("Base62", try_base62, "encoding"),
     ("uuencode", try_uuencode, "encoding"),
     ("z85 (ZeroMQ)", try_z85, "encoding"),
     ("yEnc", try_yenc, "encoding"),
     ("Baudot/ITA2 (5-bit)", try_baudot, "encoding"),
+    ("Zlib/Deflate", try_zlib, "encoding"),
+    ("Hex Dump (xxd/hexdump)", try_hex_dump, "encoding"),
+    ("Punycode (IDNA/ACE)", try_punycode, "encoding"),
+    ("Braille (Unicode Grade 1)", try_braille, "encoding"),
     ("Hex (Base16)", try_hex, "encoding"),
     ("Binary (8-bit)", try_binary, "encoding"),
     ("Octal", try_octal, "encoding"),

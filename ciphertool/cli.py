@@ -51,10 +51,28 @@ def main():
         "--crib",
         metavar="METIN",
         help=(
-            "Crib-dragging saldırısı için bilinen parça. Girdi XOR/Vigenère ile "
-            "şifreliyse ve içinde bu parçanın geçtiğini biliyorsan anahtarı "
-            "buradan türetmeyi dener. Örnek: --crib 'flag{'"
+            "Crib-dragging saldirisi icin bilinen parca. Girdi XOR/Vigenere ile "
+            "sifreliyse ve icinde bu parcayi biliyorsan anahtari buradan turetmeyi dener."
         ),
+    )
+    parser.add_argument(
+        "--context",
+        choices=["ctf", "windows", "linux", "web", "pentest"],
+        default=None,
+        help=(
+            "Domain-spesifik analiz bağlamı. Hash güven puanlarını ve ipuçlarını "
+            "bu bağlama göre ayarlar. Seçenekler: "
+            "ctf (tüm klasik şifreler önce), "
+            "windows (NTLM/Kerberos/AD formatları), "
+            "linux (sha512crypt/md5crypt/shadow dosyası), "
+            "web (JWT/API key/session token), "
+            "pentest (AD saldırı formatları, Kerberoasting vb.)."
+        ),
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Detaylı çıktı: her aday için skor bileşenlerini ve karar gerekçesini göster.",
     )
     args = parser.parse_args()
 
@@ -75,6 +93,43 @@ def main():
         sys.exit(1)
 
     use_color = not args.no_color and sys.stdout.isatty()
+
+    # Context-aware ipucu notları
+    context_hints = []
+    if args.context:
+        ctx_map = {
+            "ctf": [
+                "CTF BAGLAMI: Klasik sifrelere ve encoding zincirine oncelik verildi.",
+                "CTF'lerde yaygin: Base64, ROT13, XOR, Caesar, Vigenere, Morse, Bacon, A1Z26.",
+                "CTF flag formati: flag{...}, CTF{...}, picoCTF{...} gibi kaliplara dikkat.",
+            ],
+            "windows": [
+                "WINDOWS BAGLAMI: NTLM, Net-NTLMv2, Kerberos hash formatlari oncelikli.",
+                "32-hex -> NTLM ihtimali yuksek (MD5 ile ayirt edilemez ama Windows ortaminda NTLM cok daha yaygin).",
+                "Kerberoasting/AS-REP roasting formatlari: $krb5tgs$23$, $krb5asrep$23$ prefix'ine bak.",
+                "MsCacheV2: $DCC2$ prefix. DPAPI blob: base64 + yuksek entropi.",
+            ],
+            "linux": [
+                "LINUX BAGLAMI: /etc/shadow formatlari oncelikli.",
+                "Modern Linux: $6$ (sha512crypt) veya $y$ (yescrypt). Eski: $1$ (md5crypt).",
+                "40-hex SHA1 yerine ssh fingerprint olabilir (ssh-keygen -l).",
+            ],
+            "web": [
+                "WEB BAGLAMI: JWT, API key, session token, OAuth token oncelikli.",
+                "3 kisim nokta ayirimli + eyJ basli -> JWT (JSON Web Token).",
+                "ghp_, AKIA, AIza, sk_live_, xoxb- gibi prefix'li string'ler API key adayi.",
+                "Bearer/Basic auth header: Authorization: Bearer <token>.",
+            ],
+            "pentest": [
+                "PENTEST BAGLAMI: AD saldiri formatlari, credential dump, pass-the-hash.",
+                "LM:NTLM cift (32hex:32hex) -> SAM/secretsdump.py ciktisi.",
+                "Kerberoasting: $krb5tgs$23$ | AS-REP: $krb5asrep$23$ (hashcat/john dogrudan calisir).",
+                "NetNTLMv2: username::domain:challenge:hash formati.",
+                "MsCacheV2 (domain cached credentials): $DCC2$10240#user#hash.",
+            ],
+        }
+        context_hints = ctx_map.get(args.context, [])
+
     charset_notes = analyze_charset(raw)
     candidates = explore(raw, max_depth=args.depth, top_n=args.top)
 
@@ -173,6 +228,14 @@ def main():
     print(color("=== Karakter Seti Analizi ===", BOLD + CYAN, use_color))
     for note in charset_notes:
         print(f"  - {note}")
+
+    # Context ipuçları (varsa)
+    if context_hints:
+        print()
+        ctx_label = (args.context or "").upper()
+        print(color(f"=== Context: [{ctx_label}] Analiz Ipuclari ===", BOLD + YELLOW, use_color))
+        for hint in context_hints:
+            print(f"  {color('>', YELLOW, use_color)} {hint}")
 
     # Crib-dragging sonuçları (varsa)
     if crib_results:

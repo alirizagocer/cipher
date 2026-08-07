@@ -116,7 +116,19 @@ PREFIX_PATTERNS = [
     (r"^\$S\$[./0-9A-Za-z]{52}$", "Drupal 7 (phpass varyantı)", 93,
      "'$S$' + 52 karakter -> Drupal 7'ye özel phpass hash formatı.", ""),
     (r"^grub\.pbkdf2\.sha512\.", "GRUB2 PBKDF2-SHA512", 97,
-     "'grub.pbkdf2.sha512.' -> GRUB2 bootloader parola hash formatı (/boot/grub/grub.cfg).", ""),
+     "'grub.pbkdf2.sha512.' -> GRUB2 bootloader parola hash formati (/boot/grub/grub.cfg).", ""),
+    # --- Django ek formatlar ---
+    (r"^pbkdf2_sha512\$", "Django PBKDF2-SHA512", 97,
+     "'pbkdf2_sha512$iterasyon$salt$hash' -> Django SHA512 parola hash'i.", "Django >=3.1."),
+    (r"^argon2\$argon2(id|i|d)\$", "Django Argon2 parola hash'i", 97,
+     "'argon2$argon2id$...' -> Django'nun Argon2 sarmalayicisi (django-argon2 paketi).", "Django + argon2-cffi."),
+    (r"^bcrypt\$", "Django bcrypt wrapper", 95,
+     "'bcrypt$...' -> Django'nun bcrypt sarmalayicisi.", "Django + django[bcrypt]."),
+    # --- PBKDF2 ek varyantlar ---
+    (r"^\$pbkdf2-sha512\$", "PBKDF2-SHA512 (Passlib formati)", 95,
+     "'$pbkdf2-sha512$' -> Passlib kutuphanesinin PBKDF2-SHA512 formati.", ""),
+    (r"^\$pbkdf2-sha1\$", "PBKDF2-SHA1 (Passlib formati)", 93,
+     "'$pbkdf2-sha1$' -> Passlib kutuphanesinin PBKDF2-SHA1 formati.", ""),
 ]
 
 # JWT ayrica charset.py'da tespit ediliyor, burada tekrar etmiyoruz.
@@ -128,16 +140,20 @@ PREFIX_PATTERNS = [
 # Agirliklar gercek-dunya yayginligina gore KABA bir siralama - kanit degil.
 LENGTH_CANDIDATES = {
     8:  [
-        ("CRC32", 55, "Checksum, kriptografik hash DEGIL. Dosya bütünlüğü/ZIP'te sık görülür."),
-        ("Adler-32", 20, "zlib/PNG'de kullanılan checksum."),
-        ("CRC32B", 15, "PHP crc32() varyantı."),
-        ("Snefru (kısaltılmış/nadir)", 10, "Nadiren görülür."),
+        ("CRC32", 45, "Checksum, kriptografik hash DEGIL. Dosya butunlugu/ZIP'te sik gorulur. Hashcat mode 11500."),
+        ("xxHash32", 20, "Cok hizli non-cryptographic hash, sistem genellikle little-endian doner."),
+        ("FNV-1a-32", 10, "Non-cryptographic, hash tablolarda ve protokol checksum'larda kullanilir."),
+        ("Adler-32", 10, "zlib/PNG'de kullanilan checksum."),
+        ("CRC32B", 10, "PHP crc32() varyanti."),
+        ("Snefru (kisaltilmis/nadir)", 5, "Nadiren gorulur."),
     ],
     16: [
-        ("CRC64", 40, "Checksum amaçlı, kriptografik değil."),
-        ("Half-MD5 (kırpılmış)", 30, "Bazı sistemler MD5'i kısaltarak saklar."),
-        ("Tiger-64 (nadir)", 15, ""),
-        ("Diğer kırpılmış hash", 15, "Herhangi bir hash'in ilk 16 hex karakteri olabilir."),
+        ("CRC64", 35, "Checksum amacli, kriptografik degil."),
+        ("xxHash64", 25, "Cok hizli non-cryptographic hash. big-endian hex olarak gorulur."),
+        ("FNV-1a-64", 15, "Non-cryptographic, protokol ve hash tablolarda kullanilir."),
+        ("Half-MD5 (kirpilmis)", 15, "Bazi sistemler MD5'i kisaltarak saklar."),
+        ("Tiger-64 (nadir)", 5, ""),
+        ("Diger kirpilmis hash", 5, "Herhangi bir hash'in ilk 16 hex karakteri olabilir."),
     ],
     32: [
         ("MD5", 55, "En yaygın 32-hex hash — eski sistemler, dosya checksum, cache key olarak hâlâ çok yaygın."),
@@ -159,11 +175,12 @@ LENGTH_CANDIDATES = {
         ("RIPEMD-224", 10, "Nadir."),
     ],
     64: [
-        ("SHA256", 78, "En yaygın 64-hex hash — modern parola sistemleri, blockchain, TLS sertifikaları, git (yeni)."),
-        ("SHA3-256", 10, "Keccak tabanlı, NIST standardı ama SHA256 kadar yaygın değil."),
-        ("BLAKE2s-256", 5, "Performans odaklı sistemlerde (örn. bazı checksum araçları)."),
-        ("GOST R 34.11-94", 4, "Rusya standardı, nadiren batı sistemlerinde görülür."),
-        ("Snefru-256", 3, "Çok nadir, tarihsel."),
+        ("SHA256", 70, "En yaygin 64-hex hash -- modern parola sistemleri, blockchain, TLS sertifikalari, git (yeni)."),
+        ("BLAKE3", 12, "Modern, cok hizli hash (2020). Rust/C++ araclarda, bazı yeni sistemlerde artan kullanimda."),
+        ("SHA3-256", 8, "Keccak tabanli, NIST standardi ama SHA256 kadar yaygin degil."),
+        ("BLAKE2s-256", 5, "Performans odakli sistemlerde (orn. bazi checksum araclari)."),
+        ("GOST R 34.11-94", 3, "Rusya standardi, nadiren bati sistemlerinde gorulur."),
+        ("Snefru-256", 2, "Cok nadir, tarihsel."),
     ],
     96: [
         ("SHA384", 85, "SHA-2 ailesi, TLS sertifikalarında SHA256'dan sonra en yaygın."),

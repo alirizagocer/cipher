@@ -1,6 +1,7 @@
 import re
 
 from .hashid import identify_hash, format_hash_report
+from .apikeys import detect_api_keys, format_api_key_report
 
 
 # ---------------------------------------------------------------------------
@@ -231,18 +232,44 @@ def analyze_charset(s: str) -> list:
     if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", s2):
         notes.append("8-4-4-4-12 tire formatı -> UUID/GUID (şifre değil, kimlik numarası)")
 
-    if re.fullmatch(r"[A-Za-z\s.,!?'\";:]+", s2):
-        notes.append("Sadece harf + noktalama, boşluklar korunmuş -> klasik şifre (Caesar/Substitution/Vigenère) ihtimali yüksek")
+    if re.fullmatch(r"[A-Za-z\s.,!?':]+", s2):
+        notes.append("Sadece harf + noktalama, bosluklar korunmus -> klasik sifre (Caesar/Substitution/Vigenere) ihtimali yuksek")
 
     upper_ratio = sum(1 for c in s2 if c.isupper()) / max(sum(1 for c in s2 if c.isalpha()), 1)
     if upper_ratio > 0.95 and any(c.isalpha() for c in s2):
-        notes.append("Metin tamamen büyük harf -> bazı klasik şifrelerde (özellikle CTF) yaygın bir sunum biçimi")
+        notes.append("Metin tamamen buyuk harf -> bazi klasik sifrelerde (ozellikle CTF) yaygin bir sunum bicimi")
 
     eq_count = s2.count("=")
     if eq_count > 0 and s2.rstrip().endswith("="):
-        notes.append(f"Sonda '=' padding karakteri ({eq_count} adet) -> Base64/Base32 işareti")
+        notes.append(f"Sonda '=' padding karakteri ({eq_count} adet) -> Base64/Base32 isareti")
+
+    # Bifid cipher: Polybius + fraksiyonel transposition.
+    # Karakter seti: sadece harfler (J yerine I kullanilir), genellikle buyuk harf ve bitisik.
+    # Kesin tespit yapilamaz ama heuristic: tum harf, uzunluk cift, J yok
+    only_letters_no_j = re.sub(r"[^A-Za-z]", "", s2.upper())
+    if (len(only_letters_no_j) >= 20 and "J" not in only_letters_no_j and
+            len(re.sub(r"[^A-Za-z]", "", s2)) == len(s2.replace(" ", "").replace("\n", ""))):
+        # Eger sadece harflerden olusuyor, J yok, uzun metin
+        if len(only_letters_no_j) % 2 == 0:
+            notes.append(
+                f"Sadece harf, J harfi yok, cift uzunluk ({len(only_letters_no_j)}) "
+                "-> Bifid Cipher adayi olabilir (Polybius 5x5 + fraksiyonel transposition). "
+                "NOT: kesin tespit icin istatistiksel analiz gereklidir."
+            )
+
+    # Four-square cipher: iki Polybius karesi kullanan substitution.
+    # Ciphertext sadece harf (J haric), plaintext benzeri uzunluk.
+    # Genellikle Playfair gibi J yok pattern'i.
+    # Bu zaten Bifid detection ile cakisir; ayri not ekleyelim.
+
+    # API key / credential tespiti
+    api_matches = detect_api_keys(s2)
+    if api_matches:
+        notes.append("--- API Key / Credential Tespiti ---")
+        for line in format_api_key_report(api_matches):
+            notes.append(line)
 
     if not notes[1:]:
-        notes.append("Belirgin bir standart kalıba uymuyor -> otomatik decoder taramasına bakılmalı, katmanlı/özel şifreleme olabilir")
+        notes.append("Belirgin bir standart kaliba uymuyor -> otomatik decoder taramasina bakilmali, katmanli/ozel sifreleme olabilir")
 
     return notes

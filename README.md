@@ -2,27 +2,27 @@
 
 ## English summary
 
-identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, and other encodings or classical ciphers. It analyzes character sets and lengths, detects hash and KDF formats by structural patterns, cracks several weak ciphers without a key, recognizes file signatures, detects JWTs, and ranks candidate decodings with a scoring system. **v8 adds yEnc (Usenet) and Baudot/ITA2 (teleprinter) decoding, plus ADFGVX/ADFGX cipher recognition (65 tests, all passing).**
+identify is a terminal-based tool for identifying unknown text or data such as Base64, hex, ROT13, hashes, XOR-encrypted content, classical ciphers, and API keys/credentials. It analyzes character sets, detects hash/KDF formats by structural patterns, cracks weak ciphers without a key, detects 50+ file signatures, and ranks candidate decodings with a scoring system. **v9 adds Base62, Punycode, Zlib/Deflate, hex dump parsing, Braille decoding, 40+ API key/credential patterns (GitHub/AWS/Stripe/OpenAI/...), `--context` flag for domain-specific analysis, and structured data scoring (JSON/URL/email bonuses) — 90 tests, all passing.**
 
-Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, hash mı, XOR ile mi şifrelenmiş...) bu araç:
+Elindeki garip metnin ne olduğunu bilmiyorsan (Base64 mü, hex mi, ROT13 mi, hash mı, XOR ile mi şifrelenmiş, API key mi...) bu araç:
 
-1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID, **PEM sertifika**, **IBAN**, **kredi kartı Luhn**, **MAC adresi**, **ADFGVX/ADFGX şifre**, **yEnc başlığı**, **Baudot 5-bit gruplar** dahil)
-2. **Hash/KDF tespitini pattern-veritabanıyla yapar** — bcrypt/argon2/md5crypt/sha512crypt/Django PBKDF2 gibi yapısal olarak KESİN formatları %95+ güvenle tek adayla söyler; sadece hex uzunluğundan ayırt edilebilen durumlarda (örn. 32 hex → MD5 mi NTLM mi MD4 mü) TÜM adayları ayrı ayrı, gerçek-dünya yaygınlığına göre ağırlıklandırılmış yüzdelerle sıralar — asla "bunlardan biri" diye geçiştirmez
-3. **Genel substitution cipher'ları anahtar kelimesiz kırar** (quipqiup tarzı hill-climbing + gerçek İngilizce quadgram istatistikleri — ~389.000 quadgram, ~4.2 milyar sayım içeren practicalcryptography.com korpusu) — 26! büyüklüğündeki anahtar uzayında rastgele-takas + çoklu-restart ile arama yapar, en az ~60 harflik metinlerde güvenilir sonuç verir
-4. **Columnar Transposition cipher'ları anahtar kelimesiz kırar** — sütun sayısını (2-12) ve okuma sırasını (permütasyon) aynı quadgram fitness ile brute-force/hill-climbing yaparak bulur
-5. **Entropi analizi ile "gerçek şifreleme mi yoksa çözülebilir encoding mi" ayrımını yapar** — Shannon entropi (örneklem-boyutu düzeltmeli), AES-ECB modu işareti olan 16-byte blok tekrarı tespiti dahil
-6. Bilinen tüm encoding/cipher'ları otomatik dener (Base64/32/36/45/58/85/91, **uuencode**, **z85 (ZeroMQ)**, **yEnc** (Usenet), **Baudot/ITA2** (5-bit teleprinter), Hex, Binary, Octal, Decimal, URL/HTML/Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar (25 shift), Morse, Bacon, Polybius Square)
-7. **Anahtar gerektiren zayıf şifrelemeleri brute-force ile kırar**: XOR (tek-byte ve tekrarlayan anahtar — artık **quadgram fitness ile doğrulama**, Vigenère/Beaufort ile aynı strateji), Vigenère ve Beaufort (IC + quadgram ile), Rail Fence, Affine
-8. **[YENİ] Crib-dragging (bilinen parça saldırısı)**: `--crib 'flag{'` gibi bilinen bir metin parçası verilirse XOR/Vigenère anahtarını bu ipucundan türetip doğrular — CTF'lerde yaygın, tespiti güçlendiren bir teknik
-9. **Dosya imzası (magic byte) tespiti** — decode edilen veri aslında bir PNG/ZIP/PDF/ELF/GZIP dosyasıysa bunu anında söyler
-10. **JWT tespiti** — header.payload.signature yapısını tanır, JSON içeriğini decode edip gösterir
-11. Sonuçları **3 katmana kadar zincirleme** dener (Base64 → ROT13 → Hex gibi)
-12. Her sonucu chi-kare harf frekansı + bigram analizi + kelime eşleşmesi + yazdırılabilirlik oranıyla **0-100 arası skorlar**
-13. **Hash/KDF gibi kesin olarak tespit edilen girdilerde anlamsız klasik-şifre kırma denemelerini otomatik atlar**
-14. **Geliştirilmiş JSON çıktısı** (`--json`): `hash_candidates` (yapılandırılmış, certain/confidence alanlarıyla), `crib_drag_results` (crib kullanıldıysa) alanları eklendi — scripting/otomasyon için tam makine-okunabilir
-15. En yüksek skorlu adayı en üstte gösterir
+1. Karakter setini/uzunluğunu analiz edip hızlı ipuçları verir (JWT, hash formatları, UUID, **PEM sertifika**, **IBAN**, **kredi kartı Luhn**, **MAC adresi**, **ADFGVX/ADFGX**, **yEnc**, **Baudot**, **Bifid**, **API key/credential 40+ servis** dahil)
+2. **Hash/KDF tespitini pattern-veritabanıyla yapar** — bcrypt/argon2/scrypt/PBKDF2/yescrypt/sha512crypt/Django PBKDF2 gibi yapısal olarak KESİN formatları %95+ güvenle tek adayla söyler; 8/16/32/40/64/96/128-hex girdilerde TÜM adayları (CRC32, xxHash, MD5, SHA1, SHA256, BLAKE3, Whirlpool...) ayrı ayrı gerçek-dünya yaygınlığına göre sıralar — asla geçiştirmez
+3. **Genel substitution cipher'ları anahtar kelimesiz kırar** (hill-climbing + ~389.000 quadgram İngilizce korpusu) — 26! anahtar uzayında en az ~60 harflik metinlerde güvenilir
+4. **Columnar Transposition, XOR, Vigenère, Beaufort, Rail Fence, Affine** otomatik kırma
+5. **Entropi analizi** — AES-ECB mod tespit, Shannon entropi, "gerçek şifreleme vs çözülebilir encoding" ayrımı
+6. Bilinen tüm encoding'leri otomatik dener: **Base62, Base64/32/36/45/58/85/91, uuencode, z85, yEnc, Baudot/ITA2, Zlib/Deflate, Hex Dump (xxd/hexdump), Punycode, Braille**, Hex, Binary, Octal, Decimal, URL, HTML, Unicode escape, Quoted-Printable, ROT13/47/5/18, Atbash, Caesar, Morse, Bacon, Polybius, A1Z26, NATO
+7. **Crib-dragging** (`--crib 'flag{'`) — XOR/Vigenère anahtarını bilinen parçadan türetir, CTF için kritik
+8. **50+ dosya imzası (magic byte)** — PNG, JPEG, WebP, PDF, ZIP, ELF, PE, WASM, FLAC, XZ, Zstd, TAR, XML, JSON, HTML, MP4, MKV, SQLite...
+9. **API Key / Credential Tespiti** — 40+ servis: GitHub (ghp_/ghs_), AWS (AKIA), Google (AIza), Stripe (sk_live_), Slack (xoxb-), SendGrid, OpenAI, Anthropic, HuggingFace, npm, Docker, GitLab, Atlassian, HashiCorp Vault, Shopify, SSH private/public key...
+10. **`--context` flag** — domain-spesifik analiz: `ctf`, `windows` (NTLM/Kerberos), `linux` (shadow), `web` (JWT/API), `pentest` (AD saldırı formatları)
+11. **Scoring iyileştirmesi** — JSON/XML/URL/email decode sonuçlarına yapısal bonus; false-positive engeli güçlendirildi
+12. **`--json`** makine-okunabilir çıktı (hash_candidates/crib_drag_results), **`--html`** web çıktısı, **`--verbose`** skor detayı
+13. **JWT tespiti** — header.payload.signature, JSON içerik decode
+14. Sonuçları **3 katmana kadar zincirleme** dener (Base64 → ROT13 → Hex gibi)
+15. Her sonucu chi-kare + bigram + kelime eşleşmesi + yapısal veri **0-100 arası skorlar**
 
-CyberChef'in "Magic" özelliğinin terminal/offline, açık kaynak versiyonu gibi düşünebilirsin — üstüne klasik kriptanaliz (XOR/Vigenère/Beaufort kırma, crib-dragging) ve hashID tarzı pattern-tabanlı hash tespiti de ekli.
+CyberChef'in "Magic" özelliğinin terminal/offline, açık kaynak, **security-analyst-grade** versiyonu — üstüne klasik kriptanaliz, hashID tarzı hash tespiti, ve truffleHog-benzeri API key tespiti ekli.
 
 ## Kurulum
 
