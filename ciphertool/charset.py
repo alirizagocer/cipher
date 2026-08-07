@@ -243,6 +243,15 @@ def analyze_charset(s: str) -> list:
     if eq_count > 0 and s2.rstrip().endswith("="):
         notes.append(f"Sonda '=' padding karakteri ({eq_count} adet) -> Base64/Base32 isareti")
 
+    ws_only = [c for c in s if c in (" ", "\t", "\n", "\r")]
+    if len(s) > 10 and len(ws_only) == len(s):
+        notes.append("Metin sadece bosluk, sekme (tab) ve satir sonlarindan olusuyor -> Whitespace steganografisi/dili ihtimali yüksek (ORN: Whitespace esoterik dili)")
+    else:
+        trailing_spaces = re.findall(r"[ \t]+(?:\r?\n|$)", s)
+        # Sadece son satirda olan 1 tane onemsiz olabilir, 2'den fazlaysa uyari ver
+        if len(trailing_spaces) > 2:
+            notes.append(f"Satir sonlarinda gizli bosluk/sekme karakterleri tespit edildi ({len(trailing_spaces)} adet) -> SNOW Steganografi (veya trailing whitespace stego) olabilir")
+
     # Bifid cipher: Polybius + fraksiyonel transposition.
     # Karakter seti: sadece harfler (J yerine I kullanilir), genellikle buyuk harf ve bitisik.
     # Kesin tespit yapilamaz ama heuristic: tum harf, uzunluk cift, J yok

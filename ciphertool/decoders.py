@@ -67,6 +67,31 @@ def try_base32(s: str):
     return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
+def try_base32_crockford_bytes(s: str):
+    """Crockford's Base32 decode. 0-9, A-Z (I, L, O, U, U haric).
+    I/L -> 1, O -> 0, U haric."""
+    s2 = s.strip().replace("-", "").upper()
+    if not s2 or not re.fullmatch(r"[0-9A-TV-Z*~$=]+", s2):
+        return None
+    s2 = s2.replace("O", "0").replace("I", "1").replace("L", "1")
+    crockford_chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    rfc4648_chars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    if not all(c in crockford_chars for c in s2):
+        return None
+    trans = str.maketrans(crockford_chars, rfc4648_chars)
+    rfc_b32 = s2.translate(trans)
+    pad = (-len(rfc_b32)) % 8
+    try:
+        return base64.b32decode(rfc_b32 + "=" * pad)
+    except Exception:
+        return None
+
+
+def try_base32_crockford(s: str):
+    raw = try_base32_crockford_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
 def try_base85_bytes(s: str):
     s2 = s.strip()
     if not s2 or len(s2) < 5:
@@ -537,6 +562,53 @@ def try_nato_phonetic(s: str):
     return "".join(out)
 
 
+def try_tap_code(s: str):
+    """Tap code decode (1-5 arasi rakam ciftleri)."""
+    s2 = s.strip().replace(" ", "").replace(".", "")
+    if not s2 or len(s2) % 2 != 0: return None
+    if not re.fullmatch(r"[1-5]+", s2): return None
+    grid = [
+        "A", "B", "C", "D", "E",
+        "F", "G", "H", "I", "J",
+        "L", "M", "N", "O", "P",
+        "Q", "R", "S", "T", "U",
+        "V", "W", "X", "Y", "Z"
+    ]
+    res = []
+    for i in range(0, len(s2), 2):
+        row = int(s2[i]) - 1
+        col = int(s2[i+1]) - 1
+        res.append(grid[row*5 + col])
+    return "".join(res)
+
+
+def try_t9_multitap(s: str):
+    """T9/Multitap decode. Ornek: 2 22 222 (ABC)."""
+    key_map = {
+        "2": "A", "22": "B", "222": "C",
+        "3": "D", "33": "E", "333": "F",
+        "4": "G", "44": "H", "444": "I",
+        "5": "J", "55": "K", "555": "L",
+        "6": "M", "66": "N", "666": "O",
+        "7": "P", "77": "Q", "777": "R", "7777": "S",
+        "8": "T", "88": "U", "888": "V",
+        "9": "W", "99": "X", "999": "Y", "9999": "Z",
+        "0": " ",
+    }
+    s2 = s.strip()
+    if not s2 or not re.fullmatch(r"[0-9\-\s]+", s2): return None
+    tokens = re.split(r"[\-\s]+", s2)
+    res = []
+    for t in tokens:
+        if not t: continue
+        if t in key_map:
+            res.append(key_map[t])
+        else:
+            return None
+    if not res: return None
+    return "".join(res)
+
+
 # ---------------------------------------------------------------- Brute-force gerektiren klasik sifreler
 # Bunlar engine.py tarafinda ayri ele alinir (en iyi parametreyi bulup tek aday dondururler)
 # cunku anahtar uzayi buyuk / dinamik etiket gerektiriyor.
@@ -724,6 +796,51 @@ def try_base62(s: str):
         return decoded if decoded.isprintable() or "\n" in decoded else None
     except UnicodeDecodeError:
         return None
+
+
+# ---------------------------------------------------------------- Base32 Crockford
+# Alfabe: 0123456789ABCDEFGHJKMNPQRSTVWXYZ (I, L, O atlanir)
+
+_B32_CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_B32_CROCKFORD_MAP = {c: i for i, c in enumerate(_B32_CROCKFORD_ALPHABET)}
+
+def try_base32_crockford_bytes(s: str):
+    s2 = s.upper().replace("-", "").strip()
+    if not s2 or not all(c in _B32_CROCKFORD_MAP for c in s2):
+        return None
+    n = 0
+    for c in s2:
+        n = n * 32 + _B32_CROCKFORD_MAP[c]
+    try:
+        raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+        return raw
+    except Exception:
+        return None
+
+def try_base32_crockford(s: str):
+    raw = try_base32_crockford_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
+
+
+# ---------------------------------------------------------------- Base100 (Emoji)
+def try_base100_bytes(s: str):
+    """Base100 emoji decode. Emojileri raw bytelara cevirir. Offset = U+1F3FB"""
+    s2 = s.strip()
+    if not s2: return None
+    out = bytearray()
+    for c in s2:
+        val = ord(c) - 127995
+        if 0 <= val <= 255:
+            out.append(val)
+        elif c not in ("\r", "\n", " ", "\t"):
+            return None
+    if not out: return None
+    return bytes(out)
+
+
+def try_base100(s: str):
+    raw = try_base100_bytes(s)
+    return raw.decode("utf-8", errors="replace") if raw is not None else None
 
 
 # ---------------------------------------------------------------- Punycode (ACE / IDNA)
@@ -1123,12 +1240,14 @@ BYTES_DECODERS = [
     ("Base64", try_base64_bytes),
     ("Base64 (URL-safe)", try_base64_urlsafe_bytes),
     ("Base32", try_base32_bytes),
+    ("Base32 Crockford", try_base32_crockford_bytes),
     ("Base85/Ascii85", try_base85_bytes),
     ("Base58", try_base58_bytes),
     ("Base91", try_base91_bytes),
     ("Base45", try_base45_bytes),
     ("Base36", try_base36_bytes),
     ("Base62", try_base62_bytes),
+    ("Base100 (Emoji)", try_base100_bytes),
     ("uuencode", try_uuencode_bytes),
     ("z85 (ZeroMQ)", try_z85_bytes),
     ("yEnc", try_yenc_bytes),
@@ -1140,12 +1259,14 @@ SINGLE_SHOT_DECODERS = [
     ("Base64", try_base64, "encoding"),
     ("Base64 (URL-safe)", try_base64_urlsafe, "encoding"),
     ("Base32", try_base32, "encoding"),
+    ("Base32 Crockford", try_base32_crockford, "encoding"),
     ("Base85/Ascii85", try_base85, "encoding"),
     ("Base58", try_base58, "encoding"),
     ("Base91", try_base91, "encoding"),
     ("Base45", try_base45, "encoding"),
     ("Base36", try_base36, "encoding"),
     ("Base62", try_base62, "encoding"),
+    ("Base100 (Emoji)", try_base100, "encoding"),
     ("uuencode", try_uuencode, "encoding"),
     ("z85 (ZeroMQ)", try_z85, "encoding"),
     ("yEnc", try_yenc, "encoding"),
@@ -1164,6 +1285,8 @@ SINGLE_SHOT_DECODERS = [
     ("Quoted-Printable", try_quoted_printable, "encoding"),
     ("JWT", try_jwt, "encoding"),
     ("Polybius Square (5x5)", try_polybius, "cipher"),
+    ("Tap Code", try_tap_code, "cipher"),
+    ("T9 / Multitap", try_t9_multitap, "cipher"),
     ("A1Z26 (harf-sayı kodu)", try_a1z26, "cipher"),
     ("NATO Fonetik Alfabesi", try_nato_phonetic, "cipher"),
     ("ROT13", try_rot13, "cipher"),
