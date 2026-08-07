@@ -25,7 +25,12 @@ def color(txt, c, use_color):
 
 def score_bar(score: float, width: int = 20) -> str:
     filled = int(round(score / 100 * width))
-    return "█" * filled + "░" * (width - filled)
+    try:
+        if sys.stdout.encoding:
+            "█░".encode(sys.stdout.encoding)
+        return "█" * filled + "░" * (width - filled)
+    except Exception:
+        return "#" * filled + "-" * (width - filled)
 
 
 def truncate(s: str, n: int = 100) -> str:
@@ -277,11 +282,11 @@ def main():
               f"{color(score_bar(score), sc_color, use_color)}"
               f"{color('  [DOSYA]', MAGENTA, use_color) if c.kind == 'file' else ''}")
         print(f"    {color('Zincir:', DIM, use_color)} {chain_str}")
-        print(f"    {color('Çıktı :', DIM, use_color)} {text_preview}")
+        print(f"    {color('Cikti :', DIM, use_color)} {text_preview}")
         print()
 
-    print(color("İpucu: en yüksek skorlu satır çoğunlukla doğru çözümdür. "
-                 "Skor 35'in altındaysa muhtemelen yanlış yoldasın ya da veri gerçek "
+    print(color("Ipucu: en yuksek skorlu satir cogunlukla dogru cozumdur. "
+                 "Skor 35'in altindaysa muhtemelen yanlis yoldasin ya da veri gercek "
                  "şifreleme (AES/RSA/XOR w/ key) ile korunuyor. --json ile scripting için "
                  "makine-okunabilir çıktı alabilirsin. --crib 'bilinen_metin' ile "
                  "crib-dragging saldırısı deneyebilirsin.", DIM, use_color))

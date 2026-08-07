@@ -903,26 +903,33 @@ def test_filesig_xml_detected():
 
 def test_cli_context_flag():
     """--context flag CLI'da hata vermeden calisimali."""
-    import subprocess, sys
+    import subprocess, sys, os
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "-m", "ciphertool.cli", "--context", "windows",
          "aad3b435b51404eeaad3b435b51404ee"],
         capture_output=True, text=True,
-        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id"
+        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id",
+        env=env
     )
     # Hata olmamali ve WINDOWS context basligi gorulmeli
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert "WINDOWS" in result.stdout or "NTLM" in result.stdout
 
 
+
 def test_cli_verbose_flag():
     """--verbose flag CLI'da hata vermeden calisimali."""
-    import subprocess, sys
+    import subprocess, sys, os
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "-m", "ciphertool.cli", "--verbose",
          "SGVsbG8gV29ybGQ="],
         capture_output=True, text=True,
-        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id"
+        cwd=r"c:\Users\aliri\OneDrive\Desktop\cipher-id",
+        env=env
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
 
