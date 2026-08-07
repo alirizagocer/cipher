@@ -1,7 +1,8 @@
 import re
-
+import hashlib
 from .hashid import identify_hash, format_hash_report
 from .apikeys import detect_api_keys, format_api_key_report
+from .decoders import try_base58_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +152,48 @@ def _detect_baudot_format(s: str):
     return None
 
 
+def _detect_crypto_wallet(s: str):
+    clean = s.strip()
+    if not clean:
+        return None
+    # Bitcoin P2PKH / P2SH (Base58Check)
+    if re.fullmatch(r"^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$", clean):
+        raw = try_base58_bytes(clean)
+        if raw and len(raw) == 25:
+            payload = raw[:-4]
+            checksum = raw[-4:]
+            h1 = hashlib.sha256(payload).digest()
+            h2 = hashlib.sha256(h1).digest()
+            if h2[:4] == checksum:
+                return "Geçerli Bitcoin adresi (P2PKH/P2SH). Base58Check doğrulandı (100% KESİN) → Kripto cüzdan adresi."
+    # Bech32 Bitcoin
+    if re.fullmatch(r"^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,90}$", clean, re.IGNORECASE) and clean.lower().startswith("bc1"):
+        return "Bitcoin Bech32 (SegWit) adresine benziyor → Kripto cüzdan adresi."
+    # Ethereum
+    if re.fullmatch(r"^0x[a-fA-F0-9]{40}$", clean):
+        return "Ethereum cüzdan / smart contract adresi → Kripto kimlik."
+    # Monero
+    if re.fullmatch(r"^[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}$", clean):
+        return "Monero (XMR) adresine benziyor → Kripto cüzdan adresi."
+    return None
+
+
+def _detect_pgp_message(s: str):
+    if "-----BEGIN PGP MESSAGE-----" in s:
+        return "PGP Şifreli Mesaj (Pretty Good Privacy) → Açmak için özel (private) anahtar gerekir."
+    if "-----BEGIN PGP PUBLIC KEY BLOCK-----" in s:
+        return "PGP Açık Anahtar (Public Key) → Şifreleme veya imza doğrulama için kullanılır."
+    if "-----BEGIN PGP PRIVATE KEY BLOCK-----" in s:
+        return "PGP Özel Anahtar (Private Key) UYARISI → Kritik gizli veri!"
+    return None
+
+
+def _detect_openssl_magic(s: str):
+    if s.strip().startswith("U2FsdGVkX1"):
+        return "OpenSSL şifreli veri (Base64 'Salted__'). Muhtemelen aes-256-cbc, parola ile kırılabilir."
+    return None
+
+
 FORMAT_DETECTORS = [
     _detect_pem,
     _detect_iban,
@@ -162,6 +205,9 @@ FORMAT_DETECTORS = [
     _detect_adfgvx,
     _detect_yenc_header,
     _detect_baudot_format,
+    _detect_crypto_wallet,
+    _detect_pgp_message,
+    _detect_openssl_magic,
 ]
 
 

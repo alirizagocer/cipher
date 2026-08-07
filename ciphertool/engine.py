@@ -13,6 +13,7 @@ import base64
 import binascii
 import re
 import time
+import heapq
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -153,65 +154,80 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
     skip_all = skip_level == "all"
     skip_ciphers = skip_level in ("all", "ciphers_only")
 
-    def recurse(text: str, chain: List[str], depth: int):
-        if budget.exhausted():
-            return
-        budget.nodes += 1
+    def a_star_search(start_text: str):
+        pq = []
+        counter = 0
+        start_score = score_text(start_text)
+        heapq.heappush(pq, (-start_score, 0, counter, [], start_text))
+        counter += 1
 
-        if depth > max_depth:
-            return
-        if text in seen_texts:
-            return
-        seen_texts.add(text)
-
-        file_hit = _check_file_signature(text)
-        if file_hit:
-            dec_name, filetype, nbytes = file_hit
-            note = (f"[DOSYA TESPİT EDİLDİ] {dec_name} ile decode edilince "
-                    f"{filetype} imzasına uyuyor ({nbytes} byte). Bu metin değil, "
-                    f"binary bir dosya — diske yazıp açman lazım.")
-            results.append(Candidate(chain=list(chain) + [f"{dec_name} -> dosya"],
-                                      text=note, score=93.0, kind="file"))
-
-        base_score = score_text(text)
-        if chain and chain[-1] in HIGH_CONFIDENCE_DECODERS:
-            base_score = max(base_score, HIGH_CONFIDENCE_FLOOR)
-        if chain:
-            results.append(Candidate(chain=list(chain), text=text, score=base_score, kind="chain"))
-
-        if depth == max_depth or budget.exhausted():
-            return
-        if skip_all:
-            return  # yapisal olarak KESIN hash -> hicbir decode denemesi yapilmaz
-
-        for name, fn, kind in SINGLE_SHOT_DECODERS:
+        while pq:
             if budget.exhausted():
-                return
-            if skip_ciphers and kind == "cipher":
-                continue  # Caesar/ROT/Atbash/Morse/Bacon vb. - hash'te anlamsiz
-            try:
-                out = fn(text)
-            except Exception:
-                out = None
-            if out and _is_meaningfully_different(text, out):
-                recurse(out, chain + [name], depth + 1)
+                break
 
-        if skip_ciphers:
-            return  # Caesar brute-force de dahil hicbir klasik sifre denemesi yok
+            priority, depth, _, chain, text = heapq.heappop(pq)
 
-        try:
-            caesar_results = try_all_caesar(text)
-            scored = sorted(((sh, out, score_text(out)) for sh, out in caesar_results),
-                             key=lambda t: t[2], reverse=True)
-            for shift, out, sc in scored[:2]:
+            if text in seen_texts:
+                continue
+            seen_texts.add(text)
+            budget.nodes += 1
+
+            file_hit = _check_file_signature(text)
+            if file_hit:
+                dec_name, filetype, nbytes = file_hit
+                note = (f"[DOSYA TESPİT EDİLDİ] {dec_name} ile decode edilince "
+                        f"{filetype} imzasına uyuyor ({nbytes} byte). Bu metin değil, "
+                        f"binary bir dosya — diske yazıp açman lazım.")
+                results.append(Candidate(chain=list(chain) + [f"{dec_name} -> dosya"],
+                                          text=note, score=93.0, kind="file"))
+                continue
+
+            base_score = score_text(text)
+            if chain and chain[-1] in HIGH_CONFIDENCE_DECODERS:
+                base_score = max(base_score, HIGH_CONFIDENCE_FLOOR)
+            if chain:
+                results.append(Candidate(chain=list(chain), text=text, score=base_score, kind="chain"))
+
+            if depth >= max_depth:
+                continue
+
+            if skip_all:
+                continue
+
+            for name, fn, kind in SINGLE_SHOT_DECODERS:
                 if budget.exhausted():
-                    return
-                if _is_meaningfully_different(text, out):
-                    recurse(out, chain + [f"Caesar (shift {shift})"], depth + 1)
-        except Exception:
-            pass
+                    break
+                if skip_ciphers and kind == "cipher":
+                    continue
+                try:
+                    out = fn(text)
+                except Exception:
+                    out = None
+                if out and _is_meaningfully_different(text, out) and out not in seen_texts:
+                    out_score = score_text(out)
+                    # A* heuristic: Derinlik basina ufak bir ceza uygulayarak kisa cozumleri ve gercekten cok iyi olan derin cozumleri onceliklendirir.
+                    priority_score = out_score - (depth * 5.0)
+                    heapq.heappush(pq, (-priority_score, depth + 1, counter, chain + [name], out))
+                    counter += 1
 
-    recurse(raw.strip(), [], 0)
+            if skip_ciphers:
+                continue
+
+            try:
+                caesar_results = try_all_caesar(text)
+                scored = sorted(((sh, out, score_text(out)) for sh, out in caesar_results),
+                                 key=lambda t: t[2], reverse=True)
+                for shift, out, sc in scored[:2]:
+                    if budget.exhausted():
+                        break
+                    if _is_meaningfully_different(text, out) and out not in seen_texts:
+                        priority_score = sc - (depth * 5.0)
+                        heapq.heappush(pq, (-priority_score, depth + 1, counter, chain + [f"Caesar (shift {shift})"], out))
+                        counter += 1
+            except Exception:
+                pass
+
+    a_star_search(raw.strip())
 
     if not skip_ciphers:
         _run_expensive_analyzers(raw.strip(), results)
