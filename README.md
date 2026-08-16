@@ -41,7 +41,7 @@ Traditional decoders rely on linear or depth-first searches, leading to combinat
 ## Installation
 
 ```bash
-git clone <github.com/alirizagocer/cipher>
+git clone github.com/alirizagocer/cipher
 cd ciphertool
 pip install -e .
 ```
