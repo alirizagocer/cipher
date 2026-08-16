@@ -195,3 +195,25 @@ def vigenere_crib_drag(
         if len(results) >= top_n:
             break
     return results
+
+
+COMMON_CRIBS = [
+    b"http://", b"https://", b"<?php", b"flag{", b"MZ\x90\x00",
+    b"\x89PNG\r\n\x1a\n", b"PK\x03\x04", b"%PDF-", b'{"', b"<?xml"
+]
+
+def auto_crib_drag_xor(data: bytes, min_score: float = -10.0) -> List[Tuple[bytes, bytes, str, float]]:
+    """Otomatik bilinen-parca denemesi yapar. Yalnizca guclu sonuclari dondurur.
+    Return: [(key, crib_used, text, quadgram_score)]
+    """
+    results = []
+    if len(data) < 10:
+        return results
+    for crib in COMMON_CRIBS:
+        if len(data) < len(crib):
+            continue
+        hits = xor_crib_drag(data, crib, top_n=1)
+        for _, key, text, fit in hits:
+            if fit >= min_score:
+                results.append((key, crib, text, fit))
+    return sorted(results, key=lambda x: x[3], reverse=True)

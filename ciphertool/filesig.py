@@ -109,11 +109,48 @@ def detect_file_signature(raw: bytes):
             return name
 
     # TAR: offset 257'de "ustar" varsa
-    if len(raw) >= 262 and raw[257:262] == b"ustar":
+    if len(raw) >= 262 and raw[257:263] == b"ustar\x00":
         return "TAR archive"
 
     # ISO 9660 CD image: offset 32769'da "CD001"
     if len(raw) >= 32774 and raw[32769:32774] == b"CD001":
         return "ISO 9660 CD image"
 
+    return None
+
+def extract_trailing_data(data: bytes):
+    """
+    PNG, JPEG veya ZIP dosya bitiş (EOF) imzalarından sonra gelen gizlenmiş
+    Steganografi / Trailing veriyi çıkarır.
+    """
+    if len(data) < 20:
+        return None
+        
+    # PNG IEND chunk: b'\x00\x00\x00\x00IEND\xaeB`\x82'
+    png_eof = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        pos = data.find(png_eof)
+        if pos != -1:
+            trailing = data[pos + len(png_eof):]
+            if len(trailing) > 5:
+                return trailing
+                
+    # JPEG EOF: 0xFF 0xD9
+    if data.startswith(b"\xff\xd8\xff"):
+        pos = data.rfind(b"\xff\xd9")
+        if pos != -1:
+            trailing = data[pos + 2:]
+            if len(trailing) > 5:
+                return trailing
+                
+    # ZIP EOCD (End of Central Directory)
+    if data.startswith(b"PK\x03\x04"):
+        pos = data.rfind(b"PK\x05\x06")
+        if pos != -1 and pos + 22 <= len(data):
+            comment_len = int.from_bytes(data[pos+20:pos+22], "little")
+            end_of_zip = pos + 22 + comment_len
+            trailing = data[end_of_zip:]
+            if len(trailing) > 5:
+                return trailing
+                
     return None

@@ -308,6 +308,8 @@ def crack_beaufort(ciphertext: str):
 # standart yontemdir (quadgram istatistikleri practicalcryptography.com kaynakli).
 
 import random as _random
+import math as _math
+
 
 _ALPHABET = string.ascii_uppercase
 
@@ -445,3 +447,85 @@ def crack_substitution(ciphertext: str, restarts: int = 200, iterations: int = 4
         confidence_note = ("DÜŞÜK güven (80-100 harf arası, sınırda — özellikle harf çeşitliliği yapay/pangram "
                             "tarzıysa başarısız olabilir; sonucu MUTLAKA gözle kontrol et)")
     return key_str, plaintext, score_text(plaintext), fitness, confidence_note
+
+# ---------------------------------------------------------------- Playfair
+# 5x5 matris uzerinde Simulated Annealing kullanarak Playfair kirma
+
+def _playfair_decrypt(ciphertext: str, grid: str) -> str:
+    pos = {c: (i//5, i%5) for i, c in enumerate(grid)}
+    out = []
+    for i in range(0, len(ciphertext)-1, 2):
+        a, b = ciphertext[i], ciphertext[i+1]
+        if a not in pos or b not in pos:
+            out.append(a)
+            out.append(b)
+            continue
+        r1, c1 = pos[a]
+        r2, c2 = pos[b]
+        if r1 == r2:
+            out.append(grid[r1 * 5 + (c1 - 1) % 5])
+            out.append(grid[r2 * 5 + (c2 - 1) % 5])
+        elif c1 == c2:
+            out.append(grid[((r1 - 1) % 5) * 5 + c1])
+            out.append(grid[((r2 - 1) % 5) * 5 + c2])
+        else:
+            out.append(grid[r1 * 5 + c2])
+            out.append(grid[r2 * 5 + c1])
+    return "".join(out)
+
+def crack_playfair(ciphertext: str, restarts: int = 10, iterations: int = 2000):
+    """Playfair sifresini tepe-tirmanma ve benzetimli tavlama ile kirar."""
+    from .ngram import quadgram_fitness
+    from .scorer import score_text
+    
+    ct = "".join(c.upper() for c in ciphertext if c.isalpha()).replace("J", "I")
+    if not ct or len(ct) < 40:
+        return None
+        
+    if len(ct) % 2 != 0:
+        ct += "X"
+        
+    best_grid = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+    best_score = float("-inf")
+    best_plain = ""
+    
+    for _ in range(restarts):
+        curr_grid_list = list("ABCDEFGHIKLMNOPQRSTUVWXYZ")
+        _random.shuffle(curr_grid_list)
+        curr_grid = "".join(curr_grid_list)
+        curr_score = quadgram_fitness(_playfair_decrypt(ct, curr_grid))
+        
+        T = 20.0
+        for _ in range(iterations):
+            L = list(curr_grid)
+            op = _random.randint(0, 50)
+            if op < 40:
+                i, j = _random.sample(range(25), 2)
+                L[i], L[j] = L[j], L[i]
+            elif op < 45:
+                r1, r2 = _random.sample(range(5), 2)
+                for c in range(5):
+                    L[r1*5+c], L[r2*5+c] = L[r2*5+c], L[r1*5+c]
+            else:
+                c1, c2 = _random.sample(range(5), 2)
+                for r in range(5):
+                    L[r*5+c1], L[r*5+c2] = L[r*5+c2], L[r*5+c1]
+            
+            new_grid = "".join(L)
+            new_score = quadgram_fitness(_playfair_decrypt(ct, new_grid))
+            
+            df = new_score - curr_score
+            if df > 0 or (T > 0.1 and _random.random() < _math.exp(df / T)):
+                curr_grid = new_grid
+                curr_score = new_score
+                if curr_score > best_score:
+                    best_score = curr_score
+                    best_grid = curr_grid
+                    best_plain = _playfair_decrypt(ct, best_grid)
+            T *= 0.99
+            
+    final_score = score_text(best_plain)
+    if final_score < 40.0:
+        return None
+        
+    return best_grid, best_plain, final_score

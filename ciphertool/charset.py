@@ -11,10 +11,71 @@ from .decoders import try_base58_bytes
 # ---------------------------------------------------------------------------
 
 def _detect_pem(s: str):
-    """-----BEGIN ... ----- blogu: sertifika/anahtar PEM formati."""
+    """-----BEGIN ... ----- blogu: sertifika/anahtar PEM formati ve Zafiyet Analizi."""
     m = re.search(r"-----BEGIN ([A-Z ]+)-----", s)
     if m:
-        return f"PEM bloğu tespit edildi: '-----BEGIN {m.group(1)}-----' → X.509 sertifika / RSA/EC anahtar / CSR / DH parametresi olabilir. Şifre değil, kriptografik materyal."
+        key_type = m.group(1)
+        base_msg = f"PEM bloğu tespit edildi: '-----BEGIN {key_type}-----' → X.509 sertifika / RSA/EC anahtar / CSR / DH parametresi olabilir."
+        
+        # Crypto-Triage (Zafiyet Analizi)
+        if "KEY" in key_type or "CERTIFICATE" in key_type:
+            b64_data = "".join(line.strip() for line in s.splitlines() if not line.startswith("-----"))
+            if b64_data:
+                import base64
+                try:
+                    der = base64.b64decode(b64_data)
+                    idx = 0
+                    modulus_len = 0
+                    exponent_val = None
+                    
+                    # Cok basit ASN.1 DER tarayicisi (recursive olmadan sadece INTEGER'lari arar)
+                    # RSA Modulus (n) her zaman cok buyuk bir INTEGER'dir (>32 byte).
+                    # Onun hemen ardindan gelen INTEGER ise exponent (e)'dir.
+                    while idx < len(der) - 2:
+                        tag = der[idx]
+                        idx += 1
+                        length = der[idx]
+                        idx += 1
+                        if length & 0x80:
+                            num_bytes = length & 0x7F
+                            length = int.from_bytes(der[idx:idx+num_bytes], 'big')
+                            idx += num_bytes
+                            
+                        # Tag 0x02 = INTEGER, Tag 0x03 = BIT STRING, 0x04 = OCTET STRING
+                        # Sequence ve String yapilarinin icine girmek icin atlamak yerine iceri siz
+                        if tag in (0x30, 0x03, 0x04):
+                            # BIT STRING ise ilk byte 'unused bits' dir, onu atla
+                            if tag == 0x03 and length > 0:
+                                idx += 1 
+                            continue
+                            
+                        if tag == 0x02:
+                            if length > 32 and modulus_len == 0:
+                                # Ilk 0x00 padding byte'i olabilir, onemsiz (uzunluk bit hesabinda ~8 bit kayar ama yeterli)
+                                bit_len = (length - 1) * 8 if der[idx] == 0 else length * 8
+                                modulus_len = bit_len
+                            elif modulus_len > 0 and exponent_val is None:
+                                exponent_val = int.from_bytes(der[idx:idx+length], 'big')
+                                break
+                        idx += length
+                        
+                    warnings = []
+                    if modulus_len > 0:
+                        if modulus_len < 1024:
+                            warnings.append(f"[!] UYARI: Zayıf modulus ({modulus_len}-bit). Matematiksel olarak kırılabilir (Crypto-Triage)!")
+                        elif modulus_len < 2048:
+                            warnings.append(f"[!] Not: {modulus_len}-bit anahtar artık güvenli kabul edilmiyor.")
+                        else:
+                            warnings.append(f"[✓] {modulus_len}-bit modulus tespit edildi.")
+                    if exponent_val is not None:
+                        if exponent_val <= 3:
+                            warnings.append(f"[!] UYARI: Çok zayıf exponent (e={exponent_val}). Saldırılara açık olabilir (Crypto-Triage)!")
+                            
+                    if warnings:
+                        return base_msg + "\n    " + "\n    ".join(warnings)
+                except Exception:
+                    pass
+        return base_msg + " Şifre değil, kriptografik materyal."
     return None
 
 

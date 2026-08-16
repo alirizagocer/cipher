@@ -22,11 +22,12 @@ from .decoders import (
     try_all_rail_fence,
 )
 from .scorer import score_text
-from .filesig import detect_file_signature
+from .filesig import detect_file_signature, extract_trailing_data
 from .crack import (
     crack_single_byte_xor, crack_repeating_xor, crack_vigenere, crack_beaufort,
-    crack_substitution,
+    crack_substitution, crack_playfair,
 )
+from .cribdrag import auto_crib_drag_xor
 from .transposition import crack_columnar_transposition
 from .hashid import identify_hash
 from .entropy import analyze_entropy, CLASS_COMPRESSED_OR_ENCRYPTED
@@ -78,7 +79,7 @@ def _hash_skip_level(raw: str) -> str:
 
 def _check_file_signature(text: str):
     """Metni yaygin byte-encoding'lerle decode edip dosya imzasi arar.
-    Eslesirse (decoder_adi, dosya_turu, byte_uzunlugu) dondurur, yoksa None."""
+    Eslesirse (decoder_adi, dosya_turu, byte_uzunlugu, ham_byte_verisi) dondurur, yoksa None."""
     for name, fn in BYTES_DECODERS:
         try:
             raw = fn(text)
@@ -87,7 +88,7 @@ def _check_file_signature(text: str):
         if raw and len(raw) >= 4:
             sig = detect_file_signature(raw)
             if sig:
-                return name, sig, len(raw)
+                return name, sig, len(raw), raw
     try:
         s2 = text.strip().replace(" ", "")
         if s2 and len(s2) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in s2):
@@ -95,7 +96,7 @@ def _check_file_signature(text: str):
             if len(raw) >= 4:
                 sig = detect_file_signature(raw)
                 if sig:
-                    return "Hex (Base16)", sig, len(raw)
+                    return "Hex (Base16)", sig, len(raw), raw
     except Exception:
         pass
     return None
@@ -174,12 +175,23 @@ def explore(raw: str, max_depth: int = 3, top_n: int = 12) -> List[Candidate]:
 
             file_hit = _check_file_signature(text)
             if file_hit:
-                dec_name, filetype, nbytes = file_hit
+                dec_name, filetype, nbytes, raw_bytes = file_hit
                 note = (f"[DOSYA TESPİT EDİLDİ] {dec_name} ile decode edilince "
                         f"{filetype} imzasına uyuyor ({nbytes} byte). Bu metin değil, "
                         f"binary bir dosya — diske yazıp açman lazım.")
                 results.append(Candidate(chain=list(chain) + [f"{dec_name} -> dosya"],
                                           text=note, score=93.0, kind="file"))
+                                          
+                # Stego-Triage: Dosyanin sonuna gizlenmis veri var mi?
+                trailing = extract_trailing_data(raw_bytes)
+                if trailing:
+                    try:
+                        trail_txt = trailing.decode("utf-8")
+                    except Exception:
+                        trail_txt = trailing.decode("latin-1")
+                    # Gizli veriyi yeni bir arama dali olarak ekle
+                    heapq.heappush(pq, (-90.0, depth + 1, counter, chain + [f"{dec_name} -> {filetype} Stego (Trailing Data)"], trail_txt))
+                    counter += 1
                 continue
 
             base_score = score_text(text)
@@ -348,6 +360,19 @@ def _run_expensive_analyzers(raw: str, results: List[Candidate]):
                     text=text, score=sc))
         except Exception:
             pass
+            
+        try:
+            auto_cribs = auto_crib_drag_xor(data, min_score=60.0)
+            for key, crib_used, text, sc in auto_cribs:
+                try:
+                    crib_str = crib_used.decode("ascii")
+                except:
+                    crib_str = crib_used.hex()
+                results.append(Candidate(
+                    chain=[f"Auto-Cribbing XOR (crib='{crib_str}', key=0x{key.hex()})"],
+                    text=text, score=sc))
+        except Exception:
+            pass
 
     try:
         vig = crack_vigenere(raw)
@@ -398,10 +423,19 @@ def _run_expensive_analyzers(raw: str, results: List[Candidate]):
         if not already_solved and letters_only_len >= 80:  # substitution kirma icin pratikte guvenilir minimum
             sub = crack_substitution(raw, time_budget_seconds=4.5)
             if sub:
-                key_str, text, sc, fitness, confidence_note = sub
+                key_str, text, sc, fit, note = sub
                 results.append(Candidate(
-                    chain=[f"Substitution kırma (hill-climbing, {confidence_note})"],
+                    chain=[f"Genel Substitution (Monoalfabetik) Kırma (Güven: {note})"],
                     text=text, score=sc))
+            
+            # Playfair
+            pf = crack_playfair(raw, restarts=10, iterations=2000)
+            if pf:
+                grid, text, sc = pf
+                if sc > 50.0:
+                    results.append(Candidate(
+                        chain=[f"Playfair Kırma (Tahmini Grid: {grid})"],
+                        text=text, score=sc))
     except Exception:
         pass
 
